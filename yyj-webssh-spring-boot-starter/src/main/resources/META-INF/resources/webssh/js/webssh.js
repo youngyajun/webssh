@@ -2684,6 +2684,19 @@ function bindEvents() {
         }
     });
 
+    // 终端日志按钮：导出终端界面显示内容
+    document.getElementById('terminalLogBtn').addEventListener('click', showTerminalLog);
+    document.getElementById('closeTerminalLogModal').addEventListener('click', () => {
+        document.getElementById('terminalLogModal').classList.remove('show');
+    });
+    document.getElementById('downloadTerminalLogBtn').addEventListener('click', downloadTerminalLog);
+    // 点击背景关闭终端日志弹窗
+    document.getElementById('terminalLogModal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+            e.currentTarget.classList.remove('show');
+        }
+    });
+
     // 终端输入处理已在 createTerminalForTab 中绑定
 }
 
@@ -4094,4 +4107,78 @@ async function copyCommandLog() {
         btn.textContent = '已复制';
         setTimeout(() => { btn.textContent = orig; }, 1200);
     }
+}
+
+// ===== 终端日志功能 =====
+// 导出当前活跃标签页终端界面显示的全部内容（含滚动回溯与可见区），支持查看与下载
+
+// 读取当前活跃标签页终端缓冲区的全部内容
+function getTerminalLogText() {
+    const at = getActiveTab();
+    if (!at || !at.terminal) return '';
+    try {
+        const buffer = at.terminal.buffer.active;
+        const lines = [];
+        for (let i = 0; i < buffer.length; i++) {
+            const line = buffer.getLine(i);
+            // translateToString(true) 去除行尾多余空白
+            lines.push(line ? line.translateToString(true) : '');
+        }
+        // 去除末尾连续空行
+        while (lines.length > 0 && lines[lines.length - 1] === '') {
+            lines.pop();
+        }
+        return lines.join('\n');
+    } catch (e) {
+        return '';
+    }
+}
+
+// 显示终端日志弹窗（展示当前活跃标签页的终端内容）
+function showTerminalLog() {
+    const at = getActiveTab();
+    const titleEl = document.getElementById('terminalLogModalTitle');
+    const content = document.getElementById('terminalLogContent');
+    if (at) {
+        titleEl.textContent = '终端日志 - ' + at.label;
+    } else {
+        titleEl.textContent = '终端日志';
+    }
+    const text = getTerminalLogText();
+    if (!text) {
+        content.innerHTML = '<div class="log-empty">暂无终端内容</div>';
+    } else {
+        // textContent 自动转义 HTML，配合 white-space: pre-wrap 保留换行
+        content.textContent = text;
+        content.scrollTop = 0;
+    }
+    document.getElementById('terminalLogModal').classList.add('show');
+}
+
+// 下载当前活跃标签页的终端日志为文本文件
+function downloadTerminalLog() {
+    const text = getTerminalLogText();
+    if (!text) return;
+    const at = getActiveTab();
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const ts = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
+        '_' + pad(now.getHours()) + '-' + pad(now.getMinutes()) + '-' + pad(now.getSeconds());
+    // 文件名中的非法字符替换为下划线
+    const label = at ? at.label.replace(/[\\/:*?"<>|]/g, '_') : 'terminal';
+    const filename = 'terminal-log_' + label + '_' + ts + '.txt';
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    // 视觉反馈：按钮短暂显示"已下载"
+    const btn = document.getElementById('downloadTerminalLogBtn');
+    const orig = btn.textContent;
+    btn.textContent = '已下载';
+    setTimeout(() => { btn.textContent = orig; }, 1200);
 }

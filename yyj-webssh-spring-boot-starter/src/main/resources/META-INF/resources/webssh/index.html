@@ -105,7 +105,10 @@
             <div class="status-bar">
                 <span id="connectionStatus"><span class="status-dot" id="statusDot"></span>未连接</span>
                 <span id="sysMonitor" class="sys-monitor"></span>
-                <span id="currentPath" title="点击复制路径到剪切板">路径: -</span>
+                <div class="status-bar-right">
+                    <button class="btn btn-icon status-icon-btn" id="terminalLogBtn" title="终端日志"><img src="images/terminal-log.png" alt="终端日志"></button>
+                    <span id="currentPath" title="点击复制路径到剪切板">路径: -</span>
+                </div>
             </div>
         </div>
     </div>
@@ -343,6 +346,24 @@
             </div>
             <div class="modal-body">
                 <div id="logContent" class="log-content">
+                    <!-- 动态填充 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 终端日志弹窗（导出终端界面显示内容） -->
+    <div class="modal" id="terminalLogModal">
+        <div class="modal-content" style="width: 90vw; max-width: 1280px; height: 85vh; max-height: 85vh;">
+            <div class="modal-header">
+                <span class="modal-title" id="terminalLogModalTitle">终端日志</span>
+                <div class="log-modal-actions">
+                    <button class="btn" id="downloadTerminalLogBtn" title="下载终端日志">下载</button>
+                    <button class="modal-close" id="closeTerminalLogModal">&times;</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="terminalLogContent" class="terminal-log-content">
                     <!-- 动态填充 -->
                 </div>
             </div>

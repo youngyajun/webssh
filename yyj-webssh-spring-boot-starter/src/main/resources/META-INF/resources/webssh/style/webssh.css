@@ -618,6 +618,41 @@ body.resizing {
 .status-dot.connected {
     display: inline-block;
 }
+/* 状态栏右侧容器：将终端日志按钮与路径显示固定在右下角 */
+.status-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+/* 状态栏图标按钮：紧凑尺寸，适配底部状态栏高度 */
+.status-icon-btn {
+    height: 24px;
+    width: 24px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+}
+.status-icon-btn:hover {
+    background: var(--border);
+    border-color: var(--border);
+}
+.status-icon-btn img {
+    width: 16px;
+    height: 16px;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+}
+.status-icon-btn:hover img {
+    opacity: 1;
+}
 /* ======================== 加载与提示状态 ======================== */
 /* 加载旋转动画、空状态占位、错误信息提示 */
 
@@ -1395,6 +1430,30 @@ body.resizing {
     text-align: center;
     padding: 40px 20px;
     color: var(--text-muted);
+}
+
+/* 终端日志内容区：等宽字体、保留空白与换行、自适应填满弹窗高度 */
+.terminal-log-content {
+    background: var(--bg-base);
+    padding: 15px;
+    border-radius: 6px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-y: auto;
+    color: var(--text);
+}
+/* 终端日志弹窗：内容区铺满 modal-body 剩余高度 */
+#terminalLogModal .modal-body {
+    display: flex;
+    flex-direction: column;
+    padding: 15px 20px;
+}
+#terminalLogModal .terminal-log-content {
+    flex: 1;
+    min-height: 0;
 }
 
 /* ======================== 字体大小提示 ======================== */
