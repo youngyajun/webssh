@@ -1384,8 +1384,8 @@ function bindEvents() {
         // 检查是否有缓存的凭据
         const cachedCreds = getCachedCredentials(at.host);
         if (needCredentials && !cachedCreds) {
-            currentHost = at.host;
-            showCredentialDialog();
+            // 标记当前标签为"待重新输入凭据"，提交凭据后复用原标签重连（而非新建标签）
+            openCredentialForPendingTab(at);
         } else if (needCredentials && cachedCreds) {
             // 有缓存凭据，重新连接当前标签页
             if (at.socket) { try { at.socket.close(); } catch (e) {} }
