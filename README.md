@@ -14,14 +14,16 @@
 
 - **Web 终端**：基于 `xterm.js` + `WebSocket`，完整终端体验（`vim`、`top`等全屏程序正常显示）
 - **多标签页**：同时连接多台主机，标签页拖拽排序，独立会话互不影响
+- **分屏终端**：拖拽会话标签到终端区触发分屏，支持水平/垂直方向与嵌套（最多 4 面板），分隔条可拖拽调整比例；切换标签或新建会话不影响
 - **文件管理**：`SFTP` 浏览目录、上传/下载文件与目录（目录自动`tar`打包）、文本预览、查看属性
-- **主题切换**：Dark / Light 双主题，终端、文件管理器、弹窗等全局联动（顶部导航栏固定暗色）
+- **主题切换**：`Dark`/`Light`双主题，终端、文件管理器、弹窗等全局联动（顶部导航栏固定暗色）
 - **安全传输**：登录密码经 RSA 加密传输，私钥一次性使用，用后即焚
 - **防暴力破解**：基于`IP`的登录失败计数与自动锁定
 - **风险命令拦截**：正则匹配危险命令（如 `rm -rf /`），命中则拒绝执行
 - **主机密钥校验**：支持严格校验（防中间人攻击）与免校验两种模式
 - **认证方式**：密码认证与私钥认证（可选私钥口令）
 - **终端自适应**：`PTY`尺寸随浏览器窗口实时同步，`vim`等程序启动即正确填充
+- **系统监控**：实时显示远程主机 `CPU`/`RAM`/`Disk`/`Load`/`Net` 指标，阈值告警（≥75% 警告、≥90% 危险），点击指标可查看详情
 
 ![webssh](data/md/webssh.gif)
 
@@ -293,8 +295,10 @@ spring:
 | POST | `/webssh/api/upload` | 上传文件 |
 | GET | `/webssh/api/stat` | 获取文件/目录属性 |
 | GET | `/webssh/api/calcSize` | 计算目录大小 |
-| POST | `/webssh/api/resolve-cwd` | 解析 cd 命令后的工作目录 |
+| POST | `/webssh/api/resolve-cwd` | 解析`cd`命令后的工作目录 |
 | POST | `/webssh/api/exec` | 执行非交互式命令 |
+| GET | `/webssh/api/monitor` | 获取系统监控概览（CPU/RAM/Disk/Load/Net） |
+| GET | `/webssh/api/monitor/detail` | 获取指定指标详情（`type=cpu`/`mem`/`disk`/`load`/`net`） |
 | WS | `/webssh/ws` | WebSocket 终端通道 |
 
 > 路径前缀 `/webssh` 可通过 `webssh.context-path` 自定义。
