@@ -905,14 +905,18 @@ function sendTerminalSize() {
     socket.send(JSON.stringify({ type: 'resize', cols: cols, rows: rows }));
 }
 
-// 在终端右上角短暂显示当前字体大小（Ctrl+滚轮调整时反馈）
+// 在终端界面正中央短暂显示当前字体大小（Ctrl+滚轮调整时反馈）
 function showFontSizeHint(size) {
+    const container = document.getElementById('terminalContainer');
+    if (!container) return;
     let hint = document.getElementById('fontSizeHint');
     if (!hint) {
         hint = document.createElement('div');
         hint.id = 'fontSizeHint';
         hint.className = 'font-size-hint';
-        document.body.appendChild(hint);
+        container.appendChild(hint);
+    } else if (hint.parentElement !== container) {
+        container.appendChild(hint);
     }
     hint.textContent = size + ' px';
     hint.classList.add('show');

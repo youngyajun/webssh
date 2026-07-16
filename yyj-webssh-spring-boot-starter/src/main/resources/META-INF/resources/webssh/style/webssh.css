@@ -1217,10 +1217,10 @@ body.resizing {
 /* Ctrl+滚轮调整终端字体时，在终端区域右上角短暂显示当前字号 */
 
 .font-size-hint {
-    position: fixed;
+    position: absolute;
     top: 50%;
-    right: 32px;
-    transform: translateY(-50%) scale(0.9);
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.9);
     z-index: 9999;
     padding: 8px 16px;
     background: rgba(31, 111, 235, 0.92);
@@ -1236,5 +1236,5 @@ body.resizing {
 }
 .font-size-hint.show {
     opacity: 1;
-    transform: translateY(-50%) scale(1);
+    transform: translate(-50%, -50%) scale(1);
 }
