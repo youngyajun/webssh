@@ -569,6 +569,17 @@ body.resizing {
     overflow-y: auto;
     color: var(--text);
 }
+/* 文件预览弹窗：占屏幕 80% 空间，充分利用显示区域 */
+#previewModal .modal-content {
+    width: 80vw;
+    height: 80vh;
+    max-width: none;
+    max-height: none;
+}
+#previewModal .preview-content {
+    max-height: none;
+    height: 100%;
+}
 /* ======================== 底部状态栏 ======================== */
 /* 显示当前终端路径（点击可复制）与连接状态指示点 */
 

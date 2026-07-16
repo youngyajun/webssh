@@ -346,7 +346,17 @@ function createTab(host, username, password, rememberCredentials, pendingCredent
 function switchTab(tabId) {
     const oldTab = getActiveTab();
     const newTab = tabs.find(t => t.id === tabId);
-    if (!newTab || newTab.id === activeTabId) return;
+    if (!newTab) return;
+
+    // 点击当前已激活的标签页：若处于"待重新输入凭据"状态，仍弹出凭据对话框
+    // （凭据框未打开时才弹，避免重复弹框）
+    if (newTab.id === activeTabId) {
+        if (newTab.pendingCredentials && !restoringTabs &&
+            !document.getElementById('credentialModal').classList.contains('show')) {
+            openCredentialForPendingTab(newTab);
+        }
+        return;
+    }
 
     // 保存旧标签页的文件管理器状态
     saveGlobalsToTab(oldTab);
@@ -398,13 +408,19 @@ function refreshFilePanelForTab(tab) {
     // 更新路径显示（状态栏位于终端面板，应显示终端当前工作目录，而非文件管理器路径）
     document.getElementById('currentPath').textContent = '路径: ' + (tab.terminalCwd || '/');
 
-    if (tab.fileSessionId) {
+    if (tab.pendingCredentials) {
+        // 凭据已失效的恢复会话：文件会话尚未建立，需用户重新输入凭据后再连接
+        document.getElementById('fileList').innerHTML =
+            '<div class="empty-state">会话凭据已失效，请重新输入凭据后连接文件管理器</div>';
+        renderBreadcrumb(tab.currentPath || '/');
+        updatePathInput(tab.currentPath || '/');
+    } else if (tab.fileSessionId) {
         // 已有文件会话，直接刷新文件列表和路径栏
         renderBreadcrumb(tab.currentPath || '/');
         updatePathInput(tab.currentPath || '/');
         loadFiles();
     } else if (tab.fileSessionConnected === false) {
-        // 文件会话尚未建立
+        // 文件会话尚未建立（正在连接中）
         document.getElementById('fileList').innerHTML =
             '<div class="empty-state">正在连接文件会话...</div>';
         renderBreadcrumb(tab.currentPath || '/');
@@ -413,6 +429,17 @@ function refreshFilePanelForTab(tab) {
         document.getElementById('fileList').innerHTML =
             '<div class="empty-state">未连接</div>';
     }
+}
+
+// 关闭标签页前二次确认，避免误关 SSH 会话导致连接意外断开
+async function confirmCloseTab(tabId) {
+    const tab = tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    const ok = await showConfirmDialog(
+        `确定要关闭会话"${tab.label}"吗？关闭后该会话的连接将断开。`,
+        { title: '关闭会话', okText: '关闭', okClass: 'btn-danger' }
+    );
+    if (ok) closeTab(tabId);
 }
 
 // 关闭标签页
@@ -566,7 +593,7 @@ function renderTabBar() {
         item.addEventListener('auxclick', (e) => {
             if (e.button === 1) {
                 e.preventDefault();
-                closeTab(item.dataset.tabId);
+                confirmCloseTab(item.dataset.tabId);
             }
         });
         // 右键菜单
@@ -625,7 +652,7 @@ function renderTabBar() {
     tabList.querySelectorAll('.tab-close').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            closeTab(btn.dataset.tabClose);
+            confirmCloseTab(btn.dataset.tabClose);
         });
     });
 
@@ -849,20 +876,37 @@ function bindTabEvents() {
     document.getElementById('emptyNewSessionBtn').addEventListener('click', () => startNewSession());
 
     // 标签右键菜单项
+    document.getElementById('ctxTabRefresh').addEventListener('click', async () => {
+        if (ctxTabTargetId) {
+            const tab = tabs.find(t => t.id === ctxTabTargetId);
+            if (tab) {
+                // 非当前活跃标签，先切换到它再刷新，确保重连后终端正确显示
+                if (tab.id !== activeTabId) switchTab(tab.id);
+                refreshTab(tab);
+            }
+        }
+        hideTabContextMenu();
+    });
     document.getElementById('ctxTabDuplicate').addEventListener('click', () => {
         if (ctxTabTargetId) duplicateSession(ctxTabTargetId);
         hideTabContextMenu();
     });
-    document.getElementById('ctxTabClose').addEventListener('click', () => {
-        if (ctxTabTargetId) closeTab(ctxTabTargetId);
+    document.getElementById('ctxTabClose').addEventListener('click', async () => {
+        const tabId = ctxTabTargetId;
         hideTabContextMenu();
+        if (tabId) await confirmCloseTab(tabId);
     });
-    document.getElementById('ctxTabCloseOthers').addEventListener('click', () => {
-        if (ctxTabTargetId) {
-            const toClose = tabs.filter(t => t.id !== ctxTabTargetId);
-            toClose.forEach(t => closeTab(t.id));
-        }
+    document.getElementById('ctxTabCloseOthers').addEventListener('click', async () => {
+        const tabId = ctxTabTargetId;
         hideTabContextMenu();
+        if (!tabId) return;
+        const others = tabs.filter(t => t.id !== tabId);
+        if (others.length === 0) return;
+        const ok = await showConfirmDialog(
+            `确定要关闭其他 ${others.length} 个会话吗？关闭后这些会话的连接将断开。`,
+            { title: '关闭其他会话', okText: '关闭', okClass: 'btn-danger' }
+        );
+        if (ok) others.forEach(t => closeTab(t.id));
     });
 }
 
@@ -1326,6 +1370,47 @@ function getCachedCredentials(host) {
     return credentialsCache[host] || null;
 }
 
+// 刷新（重新连接）指定标签页的 SSH 会话，顶部刷新按钮与标签右键菜单共用
+async function refreshTab(tab) {
+    if (!tab) return;
+    // 当前标签页正在实时输出时，提示确认避免中断（tail -f、top、日志跟随等）
+    if (tab.connected && tab.socket && tab.lastOutputTime
+        && (Date.now() - tab.lastOutputTime < STREAMING_OUTPUT_THRESHOLD_MS)) {
+        const ok = await showConfirmDialog(
+            '当前会话正在实时输出内容，重新连接将中断输出。确定要重新连接吗？',
+            { title: '确认刷新', okText: '重新连接' }
+        );
+        if (!ok) return;
+    }
+    const hostInfo = hostsInfo.find(h => h.name === tab.host);
+    // 自定义主机（不在配置中）始终需要凭据
+    const needCredentials = hostInfo ? hostInfo.needCredentials : true;
+
+    if (!needCredentials) {
+        // 情况一：配置文件已配置 SSH 凭据的会话，后端自动提供凭据
+        // 无需前端传递用户名/密码，直接重连即可（isReconnect=true：显示"正在重连"并重建文件会话）
+        connectSSHForTab(tab, '', '', true);
+        return;
+    }
+
+    // 情况二：需要用户提供凭据的会话
+    // 优先使用内存缓存凭据，其次使用标签页保存的凭据（勾选"记住凭据"时持久化在 tab 上）
+    const cachedCreds = getCachedCredentials(tab.host);
+    const savedCreds = (tab.rememberCredentials && tab.password)
+        ? { username: tab.username, password: tab.password } : null;
+    const creds = cachedCreds || savedCreds;
+
+    if (creds) {
+        // 有可用凭据：同步到标签页（重连成功后文件会话也用此凭据重建），然后重连
+        tab.username = creds.username;
+        tab.password = creds.password;
+        connectSSHForTab(tab, creds.username, creds.password, true);
+    } else {
+        // 无可用凭据：弹框让用户重新输入，提交后复用原标签重连（而非新建标签）
+        openCredentialForPendingTab(tab);
+    }
+}
+
 function bindEvents() {
     document.getElementById('hostSelector').addEventListener('change', (e) => {
         const host = e.target.value;
@@ -1366,36 +1451,7 @@ function bindEvents() {
     });
 
     document.getElementById('refreshBtn').addEventListener('click', async () => {
-        const at = getActiveTab();
-        if (!at) return;
-        // 当前活跃标签页正在实时输出时，提示确认避免中断（tail -f、top、日志跟随等）
-        if (at.connected && at.socket && at.lastOutputTime
-            && (Date.now() - at.lastOutputTime < STREAMING_OUTPUT_THRESHOLD_MS)) {
-            const ok = await showConfirmDialog(
-                '当前会话正在实时输出内容，重新连接将中断输出。确定要重新连接吗？',
-                { title: '确认刷新', okText: '重新连接' }
-            );
-            if (!ok) return;
-        }
-        const hostInfo = hostsInfo.find(h => h.name === at.host);
-        // 自定义主机（不在配置中）始终需要凭据
-        const needCredentials = hostInfo ? hostInfo.needCredentials : true;
-
-        // 检查是否有缓存的凭据
-        const cachedCreds = getCachedCredentials(at.host);
-        if (needCredentials && !cachedCreds) {
-            // 标记当前标签为"待重新输入凭据"，提交凭据后复用原标签重连（而非新建标签）
-            openCredentialForPendingTab(at);
-        } else if (needCredentials && cachedCreds) {
-            // 有缓存凭据，重新连接当前标签页
-            if (at.socket) { try { at.socket.close(); } catch (e) {} }
-            at.connected = false;
-            connectSSHForTab(at, cachedCreds.username, cachedCreds.password);
-        } else {
-            if (at.socket) { try { at.socket.close(); } catch (e) {} }
-            at.connected = false;
-            connectSSHForTab(at, at.username || '', at.password || '');
-        }
+        refreshTab(getActiveTab());
     });
 
     // 退出按钮：显示自定义确认对话框
