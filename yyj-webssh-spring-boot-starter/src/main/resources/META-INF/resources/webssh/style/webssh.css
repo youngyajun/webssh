@@ -926,18 +926,14 @@ body.resizing {
     display: flex;
     align-items: center;
     border-bottom: 1px solid var(--border);
-    overflow: hidden;
     min-height: 36px;
+    position: relative;
 }
 .tab-list {
     display: flex;
     flex: 1;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: hidden;
 }
-.tab-list::-webkit-scrollbar { height: 3px; }
-.tab-list::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
-.tab-list::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 .tab-item {
     display: flex;
     align-items: center;
@@ -1027,6 +1023,84 @@ body.resizing {
     background: var(--accent);
     z-index: 2;
     pointer-events: none;
+}
+/* 溢出下拉按钮：标签超出宽度时显示，点击展开被折叠的会话 */
+.tab-overflow-btn {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 18px;
+    border: none;
+    border-left: 1px solid var(--border);
+    background: transparent;
+    transition: color 0.15s, background 0.15s;
+    position: relative;
+}
+.tab-overflow-btn:hover {
+    color: var(--accent);
+    background: var(--bg-hover);
+}
+/* 当前活跃标签被折叠时，按钮高亮提示 */
+.tab-overflow-btn.has-active {
+    color: var(--accent);
+}
+/* 溢出下拉菜单 */
+.tab-overflow-dropdown {
+    display: none;
+    position: absolute;
+    top: 36px;
+    right: 32px;
+    min-width: 160px;
+    max-width: 280px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--bg-context-menu);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: var(--shadow-modal);
+    z-index: 1000;
+    padding: 4px 0;
+}
+.tab-overflow-dropdown.show {
+    display: block;
+}
+.tab-overflow-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    user-select: none;
+    transition: background 0.15s;
+}
+.tab-overflow-item:hover {
+    background: var(--bg-hover);
+}
+.tab-overflow-item.active {
+    color: var(--accent);
+}
+.tab-overflow-item .tab-status {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-dim);
+}
+.tab-overflow-item .tab-status.connected {
+    background: #00ff00;
+}
+.tab-overflow-item .tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
 }
 .tab-add-btn {
     width: 32px;

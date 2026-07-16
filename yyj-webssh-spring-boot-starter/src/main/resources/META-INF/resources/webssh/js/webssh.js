@@ -527,6 +527,111 @@ function renderTabBar() {
             closeTab(btn.dataset.tabClose);
         });
     });
+
+    updateTabOverflow();
+}
+
+// 检测标签栏溢出，将超出宽度的标签折叠到下拉菜单中
+let tabOverflowInited = false;
+function updateTabOverflow() {
+    const tabList = document.getElementById('tabList');
+    const overflowBtn = document.getElementById('tabOverflowBtn');
+    const overflowDropdown = document.getElementById('tabOverflowDropdown');
+    if (!tabList || !overflowBtn || !overflowDropdown) return;
+
+    // 一次性绑定溢出按钮点击与外部点击关闭
+    if (!tabOverflowInited) {
+        tabOverflowInited = true;
+        overflowBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            overflowDropdown.classList.toggle('show');
+        });
+        document.addEventListener('click', (e) => {
+            if (!overflowDropdown.contains(e.target) && e.target !== overflowBtn) {
+                overflowDropdown.classList.remove('show');
+            }
+        });
+    }
+
+    const items = Array.from(tabList.querySelectorAll('.tab-item'));
+
+    // 重置：全部显示，隐藏按钮
+    items.forEach(item => { item.style.display = ''; });
+    overflowBtn.style.display = 'none';
+
+    const containerWidth = tabList.clientWidth;
+    if (containerWidth <= 0 || tabList.scrollWidth <= containerWidth) {
+        overflowDropdown.classList.remove('show');
+        overflowDropdown.innerHTML = '';
+        return;
+    }
+
+    // 有溢出，显示按钮并预留空间
+    overflowBtn.style.display = 'flex';
+    // 按钮显示后 flex 布局会自动缩小 tab-list，clientWidth 已为实际可用宽度
+    const effectiveWidth = tabList.clientWidth;
+
+    // 测量全部可见时各标签的右边界
+    const bounds = items.map(item => ({
+        id: item.dataset.tabId,
+        el: item,
+        right: item.offsetLeft + item.offsetWidth
+    }));
+
+    // 从后往前折叠溢出的非活跃标签
+    const overflowedSet = new Set();
+    for (let i = bounds.length - 1; i >= 0; i--) {
+        if (bounds[i].right > effectiveWidth && bounds[i].id !== activeTabId) {
+            overflowedSet.add(bounds[i].id);
+            bounds[i].el.style.display = 'none';
+        }
+    }
+
+    // 检查活跃标签是否仍溢出（前面标签已折叠，需重新测量）
+    const activeBound = bounds.find(b => b.id === activeTabId);
+    if (activeBound) {
+        const activeEl = activeBound.el;
+        if (activeEl.offsetLeft + activeEl.offsetWidth > effectiveWidth) {
+            // 继续折叠活跃标签前面的非活跃可见标签，为活跃标签腾出空间
+            const activeIdx = bounds.indexOf(activeBound);
+            for (let i = activeIdx - 1; i >= 0; i--) {
+                if (!overflowedSet.has(bounds[i].id)) {
+                    overflowedSet.add(bounds[i].id);
+                    bounds[i].el.style.display = 'none';
+                    if (activeEl.offsetLeft + activeEl.offsetWidth <= effectiveWidth) break;
+                }
+            }
+            // 若仍溢出，折叠活跃标签自身
+            if (activeEl.offsetLeft + activeEl.offsetWidth > effectiveWidth) {
+                overflowedSet.add(activeTabId);
+                activeEl.style.display = 'none';
+            }
+        }
+    }
+
+    // 按原顺序收集折叠的标签
+    const overflowedTabs = tabs.filter(t => overflowedSet.has(t.id));
+
+    // 渲染下拉菜单
+    overflowDropdown.innerHTML = overflowedTabs.map(t => {
+        const activeClass = t.id === activeTabId ? ' active' : '';
+        const connectedClass = t.connected ? ' connected' : '';
+        return `<div class="tab-overflow-item${activeClass}" data-tab-id="${t.id}" title="${t.label} (${t.host})">
+            <span class="tab-status${connectedClass}"></span>
+            <span class="tab-label">${escapeHtml(t.label)}</span>
+        </div>`;
+    }).join('');
+
+    // 活跃标签被折叠时按钮高亮提示
+    overflowBtn.classList.toggle('has-active', overflowedSet.has(activeTabId));
+
+    // 绑定下拉项点击：切换到对应标签
+    overflowDropdown.querySelectorAll('.tab-overflow-item').forEach(item => {
+        item.addEventListener('click', () => {
+            switchTab(item.dataset.tabId);
+            overflowDropdown.classList.remove('show');
+        });
+    });
 }
 
 // 清除所有拖拽相关样式并重置状态
@@ -741,7 +846,10 @@ function loadHosts() {
 // 窗口尺寸变化时重新适配（防抖）——影响当前活跃终端
 window.addEventListener('resize', () => {
     clearTimeout(resizeDebounceTimer);
-    resizeDebounceTimer = setTimeout(safeFit, 100);
+    resizeDebounceTimer = setTimeout(() => {
+        safeFit();
+        updateTabOverflow();
+    }, 100);
 });
 
 // 安全地执行 fit 并将新尺寸同步给后端 SSH 通道
