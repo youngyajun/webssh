@@ -189,7 +189,10 @@
                 <div class="form-group">
                     <label for="credentialHost">主机</label>
                     <div class="host-combobox">
-                        <input type="text" id="credentialHost" class="form-control" placeholder="选择或输入主机/IP（可含端口，如 192.168.1.1:2222）" autocomplete="off">
+                        <input type="text" id="credentialHost" class="form-control" placeholder="选择或输入主机/IP（可含端口，如 192.168.1.166:2222）" autocomplete="off">
+                        <button type="button" class="host-clear-btn" id="hostClearBtn" title="清空" tabindex="-1" aria-label="清空主机输入">
+                            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg>
+                        </button>
                         <div class="host-dropdown" id="hostDropdown"></div>
                     </div>
                 </div>
