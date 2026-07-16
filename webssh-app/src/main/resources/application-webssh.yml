@@ -1,0 +1,86 @@
+# WebSSH 配置
+# ============================================================================
+# 文件上传/下载大小限制说明
+# ----------------------------------------------------------------------------
+# 1. 上传（POST /webssh/api/upload）
+#    - 受 Spring Boot 全局 multipart 配置约束，配置项位于 application.yml：
+#        spring.servlet.multipart.max-file-size        单文件最大大小（默认 1MB）
+#        spring.servlet.multipart.max-request-size     整个请求最大大小（默认 10MB）
+#    - 超过限制会抛 MaxUploadSizeExceededException，前端收到 500 错误
+#    - 若使用反向代理（如 Nginx），还需同步调整 client_max_body_size
+#      以及 Tomcat 的 server.tomcat.max-swallow-size / max-http-form-post-size
+#
+# 2. 下载（GET /webssh/api/download）
+#    - 代码层面无大小限制，采用 SFTP/tar 流式传输（4KB 缓冲区）
+#    - 实际上限受 HTTP 超时、代理超时（proxy_read_timeout）等网络层约束
+#
+# 3. 文件预览（GET /webssh/api/preview）
+#    - 硬编码 2MB 限制（WebSshFileController 中 maxSize = 2 * 1024 * 1024）
+#    - 超过会提示“文件过大，不支持预览，请直接下载”，如需调整需改源码
+# ============================================================================
+webssh:
+  # 是否启用（设为 false 则完全关闭 WebSSH）
+  enabled: true
+  # WebSSH 界面访问路径前缀
+  context-path: /webssh
+  # WebSSH 管理界面登录账号（必填，无默认值，启动时校验）
+  username: webssh
+  # WebSSH 管理界面登录密码（必填，无默认值，建议强密码）
+  password: webssh
+  # SSH 连接超时（毫秒）
+  timeout: 10000
+  # 终端类型
+  terminal-type: xterm-256color
+  # 字符编码
+  charset: UTF-8
+  # 主机密钥校验：yes=严格校验（推荐生产环境），no=不校验（默认）
+  host-key-verification: no
+  # known_hosts 路径（host-key-verification=yes 时使用）
+  # known-hosts: ~/.ssh/known_hosts
+
+  # SSH 主机列表
+  hosts:
+    - name: 192.168.1.166
+      host: 192.168.1.166
+      port: 22
+      # 可以不配置username&password，登录后在界面手动输入
+      username:
+      password:
+
+    - name: 生产服务器
+      host: xxx.xxx.xxx.xxx
+      port: 22
+      # === （username&password）和 （privateKey&passphrase）可以二选一 ===
+      # username: root									# 可以不配置username，登录后在界面手动输入
+      # password: ssh-password							# 可以不配置password，登录后在界面手动输入
+
+      # privateKey: /path/to/id_rsa
+      # passphrase: private-key-password
+
+  # 高风险命令正则列表（命中任意一条则拒绝通过终端执行）
+  high-risk-commands:
+    # === 文件系统破坏 ===
+    - '^rm\s+-rf\s+/'                                   # rm -rf /  (删除根目录)
+    - '^rm\s+-rf\s+/\*'                                 # rm -rf /* (删除根目录下所有文件)
+    - '^rm\s+-rf\s+~'                                   # rm -rf ~  (删除家目录)
+    - '>\s*/dev/sd[a-z]'                                # > /dev/sda (覆盖磁盘)
+    - 'dd\s+if=.*of=/dev/'                              # dd 直接写磁盘
+    - 'mkfs\.'                                          # mkfs.*    (格式化文件系统)
+    # === 权限失控 ===
+    - '^chmod\s+-R\s+777\s+/'                           # chmod -R 777 / (开放所有权限)
+    - '^chown\s+-R\s+\w+:\w+\s+/'                       # chown -R 递归改所有者
+    # === 系统关机/重启 ===
+    - '^shutdown'                                       # shutdown
+    - '^reboot'                                         # reboot
+    - '^halt'                                           # halt
+    - '^poweroff'                                       # poweroff
+    - '^init\s+[06]'                                    # init 0 / init 6
+    # === 进程与磁盘 ===
+    - 'fdisk\s+/dev/'                                   # fdisk 磁盘分区
+    - 'parted\s+/dev/'                                  # parted 磁盘分区
+
+  # 登录安全策略（防暴力破解）
+  login-security:
+    max-fail-attempts: 5      							# 最大失败次数（0 或负数=关闭限制）
+    lock-minutes: 5           							# 锁定时长（分钟）
+    trust-forwarded-for: false 							# 是否信任 X-Forwarded-For（反代场景设为 true）

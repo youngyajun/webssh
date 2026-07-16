@@ -1,0 +1,11 @@
+/.idea/
+
+**/target/
+**/build/
+**/.gradle/
+
+**/.idea/
+**/.vscode/
+*.iml
+*.ipr
+*.iws

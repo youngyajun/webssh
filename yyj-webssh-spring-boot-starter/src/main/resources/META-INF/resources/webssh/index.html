@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSSH-终端</title>
+    <link rel="icon" type="image/svg+xml" href="images/terminal.svg">
+    <link rel="stylesheet" href="style/xterm-5.5.0.css">
+    <link rel="stylesheet" href="style/webssh.css">
+    <script src="js/xterm-5.5.0.js"></script>
+    <script src="js/xterm-addon-fit.min-0.8.0.js"></script>
+    <script src="js/jsencrypt.min.js"></script>
+    <script src="js/webssh.js"></script>
+</head>
+<body data-theme="dark">
+    <div class="header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-text">WebSSH</span>
+                <img src="images/terminal.png" alt="WebSSH" class="logo-icon">
+            </div>
+            <div class="selector-wrapper">
+                <span class="selector-label">会话</span>
+                <select class="host-selector" id="hostSelector" title="选择主机新建会话">
+                    <!-- 动态填充 -->
+                </select>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="selector-wrapper">
+                <span class="selector-label">主题</span>
+                <select class="theme-selector" id="themeSelector" title="终端主题">
+                    <option value="github-dark">Dark</option>
+                    <option value="github-light">Light</option>
+                </select>
+            </div>
+            <div class="header-divider"></div>
+            <div class="header-group">
+                <button class="btn btn-icon" id="toggleFilePanel" title="文件管理器"><img src="images/file.png" alt="文件管理器"></button>
+                <button class="btn btn-icon" id="refreshBtn" title="刷新"><img src="images/refresh.png" alt="刷新"></button>
+                <button class="btn btn-icon" id="logBtn" title="命令日志"><img src="images/log.png" alt="命令日志"></button>
+            </div>
+            <div class="header-divider"></div>
+            <div class="user-group">
+                <span class="user-info" id="userInfo"></span>
+                <button class="btn btn-icon" id="logoutBtn" title="退出"><img src="images/logout.png" alt="退出"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 标签栏 -->
+    <div class="tab-bar" id="tabBar">
+        <div class="tab-list" id="tabList">
+            <!-- 动态填充 -->
+        </div>
+        <button class="tab-add-btn" id="tabAddBtn" title="新建会话">+</button>
+    </div>
+
+    <div class="main-container">
+        <div class="file-panel" id="filePanel">
+            <div class="file-panel-header">
+                <span class="file-panel-title">文件管理器</span>
+                <div class="file-panel-actions">
+                    <button class="btn btn-icon" id="refreshFileBtn" title="刷新文件列表">&#x1F504;</button>
+                    <button class="btn btn-icon" id="uploadBtn" title="上传文件">&#x2B06;</button>
+                    <label class="follow-terminal-label" title="跟随终端目录，终端 cd 时自动同步文件面板">
+                        <input type="checkbox" id="followTerminalDir">
+                        跟随终端
+                    </label>
+                </div>
+            </div>
+            <div class="path-display-bar" id="pathDisplayBar">
+                <div class="breadcrumb" id="breadcrumb">
+                    <!-- 动态填充 -->
+                </div>
+                <div class="path-bar">
+                    <div class="path-input-wrapper">
+                        <span class="path-input-icon">📁</span>
+                        <input type="text" id="pathInput" class="path-input" placeholder="输入路径后回车跳转..." />
+                        <div class="path-suggestions" id="pathSuggestions"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="file-list" id="fileList">
+                <!-- 动态填充 -->
+            </div>
+        </div>
+        <div class="resizer" id="resizer"></div>
+        <div class="terminal-panel">
+            <div class="terminal-container">
+                <div class="terminal-container-inner" id="terminalContainer">
+                    <!-- 每个标签页的终端动态创建 -->
+                </div>
+                <!-- 空状态引导（所有标签关闭后显示） -->
+                <div class="terminal-empty-state" id="terminalEmptyState" style="display:none;">
+                    <div class="empty-icon">&#x1F4BB;</div>
+                    <div class="empty-text">没有活跃的终端会话</div>
+                    <div class="empty-actions">
+                        <button class="btn btn-primary" id="emptyNewSessionBtn">新建会话</button>
+                    </div>
+                </div>
+            </div>
+            <div class="status-bar">
+                <span id="connectionStatus"><span class="status-dot" id="statusDot"></span>未连接</span>
+                <span id="currentPath" title="点击复制路径到剪切板">路径: -</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件预览弹窗 -->
+    <div class="modal" id="previewModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title" id="previewTitle">文件预览</span>
+                <button class="modal-close" id="closePreview">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="previewContent" class="preview-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 自定义右键菜单 -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" id="ctxUpload">
+            <span class="menu-icon">&#x2B06;</span>
+            <span>上传文件</span>
+        </div>
+        <div class="context-menu-separator" id="ctxSepUpload"></div>
+        <div class="context-menu-item" id="ctxDownload">
+            <span class="menu-icon">&#x2B07;</span>
+            <span>下载</span>
+        </div>
+        <div class="context-menu-item" id="ctxProperties">
+            <span class="menu-icon">&#x1F4CB;</span>
+            <span>属性</span>
+        </div>
+        <div class="context-menu-separator" id="ctxSeparator"></div>
+        <div class="context-menu-item" id="ctxPreview">
+            <span class="menu-icon">&#x1F441;</span>
+            <span>预览</span>
+        </div>
+    </div>
+
+    <!-- 终端右键菜单（复制） -->
+    <div class="context-menu" id="terminalContextMenu">
+        <div class="context-menu-item" id="ctxCopy">
+            <span class="menu-icon">&#x1F4CB;</span>
+            <span>复制</span>
+        </div>
+    </div>
+
+    <!-- 标签页右键菜单 -->
+    <div class="context-menu tab-context-menu" id="tabContextMenu">
+        <div class="context-menu-item" id="ctxTabDuplicate">
+            <span class="menu-icon">&#x1F4CB;</span>
+            <span>复制会话</span>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" id="ctxTabClose">
+            <span class="menu-icon">&#x2716;</span>
+            <span>关闭</span>
+        </div>
+        <div class="context-menu-item danger" id="ctxTabCloseOthers">
+            <span class="menu-icon">&#x2716;</span>
+            <span>关闭其他</span>
+        </div>
+    </div>
+
+    <!-- SSH 凭据输入对话框 -->
+    <div class="modal" id="credentialModal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <span class="modal-title">输入 SSH 凭据</span>
+                <button class="modal-close" id="closeCredential">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="credentialError" class="error-message" style="display: none;"></div>
+                <div class="form-group">
+                    <label for="credentialHost">主机</label>
+                    <div class="host-combobox">
+                        <input type="text" id="credentialHost" class="form-control" placeholder="选择或输入主机/IP（可含端口，如 192.168.1.1:2222）" autocomplete="off">
+                        <div class="host-dropdown" id="hostDropdown"></div>
+                    </div>
+                </div>
+                <div id="credentialConfiguredHint" class="info-message" style="display: none;">该主机已在配置文件中配置账号密码，可直接点击"连接"</div>
+                <div class="form-group" id="credentialUsernameGroup">
+                    <label for="credentialUsername">用户名</label>
+                    <input type="text" id="credentialUsername" class="form-control" placeholder="输入 SSH 用户名" autocomplete="username">
+                </div>
+                <div class="form-group" id="credentialPasswordGroup">
+                    <label for="credentialPassword">密码</label>
+                    <input type="password" id="credentialPassword" class="form-control" placeholder="输入 SSH 密码" autocomplete="current-password">
+                </div>
+                <div class="form-group" id="rememberCredentialsGroup" style="margin-top: 20px;">
+                    <label style="display: flex; align-items: center;">
+                        <input type="checkbox" id="rememberCredentials">
+                        <span style="margin-left: 8px;">记住凭据（仅本次会话）</span>
+                    </label>
+                </div>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+                    <button class="btn" id="cancelCredential">取消</button>
+                    <button class="btn btn-primary" id="submitCredential">连接</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 退出确认对话框 -->
+    <div class="modal" id="logoutModal">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <span class="modal-title">确认退出</span>
+                <button class="modal-close" id="closeLogoutModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 15px; margin: 0; color: var(--text);">确定要退出当前会话吗？</p>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;">
+                    <button class="btn" id="cancelLogout">取消</button>
+                    <button class="btn btn-danger" id="confirmLogout">确定退出</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件属性对话框 -->
+    <div class="modal" id="propertiesModal">
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header">
+                <span class="modal-title">文件属性</span>
+                <button class="modal-close" id="closeProperties">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="propertiesContent" style="text-align: center; padding: 20px;">
+                    <div class="spinner"></div>
+                    <p style="margin-top: 10px; color: var(--text-muted);">加载中...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件夹大小过大警告对话框 -->
+    <div class="modal" id="largeDirModal">
+        <div class="modal-content" style="max-width: 440px;">
+            <div class="modal-header">
+                <span class="modal-title">文件夹较大</span>
+                <button class="modal-close" id="closeLargeDirModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 15px; margin: 0; color: var(--text); line-height: 1.6;" id="largeDirMsg"></p>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;">
+                    <button class="btn" id="cancelLargeDir">取消</button>
+                    <button class="btn btn-primary" id="confirmLargeDir">仍然下载</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件上传进度对话框 -->
+    <div class="modal" id="uploadModal">
+        <div class="modal-content" style="max-width: 460px;">
+            <div class="modal-header">
+                <span class="modal-title">文件上传</span>
+                <button class="modal-close" id="closeUploadModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="uploadContent" style="text-align: center; padding: 10px 0;">
+                    <div class="upload-file-name" id="uploadFileName"></div>
+                    <div class="upload-progress-container">
+                        <div class="upload-progress-bar" id="uploadProgressBar"></div>
+                    </div>
+                    <div class="upload-progress-text" id="uploadProgressText">准备上传...</div>
+                    <div id="uploadResult" style="display: none;"></div>
+                </div>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px;" id="uploadFooter">
+                    <button class="btn" id="cancelUpload">取消上传</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件覆盖确认对话框 -->
+    <div class="modal" id="overwriteModal">
+        <div class="modal-content" style="max-width: 460px;">
+            <div class="modal-header">
+                <span class="modal-title">文件已存在</span>
+                <button class="modal-close" id="closeOverwriteModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align: center; padding: 10px 0;">
+                    <div style="font-size: 40px;">&#x26A0;&#xFE0F;</div>
+                    <div id="overwriteFileName" style="margin-top: 10px; font-weight: bold; word-break: break-all;"></div>
+                    <div style="margin-top: 8px; color: var(--text-muted);">该文件已存在，是否覆盖？</div>
+                </div>
+                <div class="form-group" id="overwriteAllWrapper" style="margin-top: 15px; display: none;">
+                    <label style="display: flex; align-items: center;">
+                        <input type="checkbox" id="overwriteAllCheckbox">
+                        <span style="margin-left: 8px;">应用到所有冲突</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px;">
+                <button class="btn" id="skipOverwriteBtn">跳过</button>
+                <button class="btn btn-primary" id="confirmOverwriteBtn">覆盖</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 命令日志弹窗 -->
+    <div class="modal" id="logModal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <span class="modal-title" id="logModalTitle">命令日志</span>
+                <div class="log-modal-actions">
+                    <button class="btn" id="copyLogBtn" title="复制全部日志">复制</button>
+                    <button class="btn btn-danger" id="clearLogBtn" title="清空当前标签页日志">清空</button>
+                    <button class="modal-close" id="closeLogModal">&times;</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="logContent" class="log-content">
+                    <!-- 动态填充 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 隐藏的文件选择器，用于上传 -->
+    <input type="file" id="hiddenFileInput" style="display: none;" multiple>
+
+</body>
+</html>

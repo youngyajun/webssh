@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSSH - 登录</title>
+    <link rel="icon" type="image/svg+xml" href="images/terminal.svg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            height: 100%;
+        }
+        body {
+            /* SF Pro 字体栈，贴近 macOS / iOS 原生体验 */
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', 'Segoe UI', sans-serif;
+            /* 多层径向渐变营造 macOS 桌面般的深空氛围 */
+            background:
+                radial-gradient(1200px 800px at 15% 20%, rgba(80, 120, 255, 0.18), transparent 60%),
+                radial-gradient(900px 700px at 85% 80%, rgba(120, 80, 255, 0.16), transparent 60%),
+                linear-gradient(135deg, #0b0b14 0%, #14141f 50%, #1a1a28 100%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            letter-spacing: -0.01em;
+        }
+        .login-container {
+            /* 精致毛玻璃：更高模糊半径 + 更细的描边 + 层叠柔影 */
+            background: rgba(28, 28, 40, 0.55);
+            backdrop-filter: blur(40px) saturate(180%);
+            -webkit-backdrop-filter: blur(40px) saturate(180%);
+            border-radius: 24px;
+            width: 100%;
+            max-width: 880px;
+            min-height: 500px;
+            box-shadow:
+                0 1px 0 0 rgba(255, 255, 255, 0.08) inset,
+                0 30px 60px rgba(0, 0, 0, 0.45),
+                0 8px 24px rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            overflow: hidden;
+            animation: containerFadeIn 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        @keyframes containerFadeIn {
+            from { opacity: 0; transform: translateY(12px) scale(0.99); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        /* 左侧品牌展示区 */
+        .brand-side {
+            flex: 1;
+            /* 更克制的苹果蓝渐变，叠加柔和高光 */
+            background:
+                radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.22), transparent 55%),
+                linear-gradient(135deg, #0a84ff 0%, #0066ff 60%, #0040dd 100%);
+            padding: 56px 44px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+        .brand-side::before {
+            content: '';
+            position: absolute;
+            top: -45%;
+            right: -30%;
+            width: 420px;
+            height: 420px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 50%;
+            filter: blur(2px);
+        }
+        .brand-side::after {
+            content: '';
+            position: absolute;
+            bottom: -35%;
+            left: -22%;
+            width: 320px;
+            height: 320px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 50%;
+            filter: blur(2px);
+        }
+        .brand-content {
+            position: relative;
+            z-index: 1;
+        }
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 32px;
+        }
+        .brand-logo-icon {
+            width: 48px;
+            height: 48px;
+            /* 图标轻微悬浮投影 */
+            filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.25));
+        }
+        .brand-logo h1 {
+            font-size: 38px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        .brand-tagline {
+            font-size: 18px;
+            opacity: 0.95;
+            margin-bottom: 40px;
+            line-height: 1.5;
+            font-weight: 400;
+            letter-spacing: 0;
+        }
+        /* 右侧表单区：苹果浅色卡片 */
+        .form-side {
+            flex: 1;
+            padding: 56px 48px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            background: #f5f5f7; /* 苹果标志性浅灰底 */
+        }
+        .form-header {
+            margin-bottom: 36px;
+        }
+        .form-header h2 {
+            color: #1d1d1f; /* 苹果主文本色 */
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+        }
+        .form-header p {
+            color: #86868b; /* 苹果次要文本色 */
+            font-size: 14px;
+            font-weight: 400;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            color: #1d1d1f;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 14px 16px;
+            background: #ffffff;
+            border: 1px solid #d2d2d7;
+            border-radius: 12px;
+            color: #1d1d1f;
+            font-size: 15px;
+            font-family: inherit;
+            transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #007aff;
+            background: #ffffff;
+            box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.15);
+        }
+        .form-group input::placeholder {
+            color: #86868b;
+        }
+        /* 输入框容器：用于承载清除按钮 */
+        .input-wrapper {
+            position: relative;
+        }
+        .input-wrapper input {
+            padding-right: 40px;
+        }
+        /* 苹果风格清除按钮：深灰圆 + 白色 SVG ×，仅在有内容时显示 */
+        .clear-btn {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%) scale(0.85);
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: rgba(60, 60, 67, 0.3);
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        .clear-btn svg {
+            width: 10px;
+            height: 10px;
+            display: block;
+            /* 让 stroke 跟随当前 color */
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2.2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }
+        .input-wrapper.has-value .clear-btn {
+            display: flex;
+        }
+        .clear-btn:hover {
+            background: rgba(60, 60, 67, 0.5);
+            transform: translateY(-50%) scale(1);
+        }
+        .clear-btn:active {
+            transform: translateY(-50%) scale(0.9);
+        }
+        .btn-login {
+            width: 100%;
+            padding: 15px;
+            /* 苹果系统蓝，更纯净 */
+            background: linear-gradient(180deg, #0a84ff 0%, #0066ff 100%);
+            border: none;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            font-family: inherit;
+            letter-spacing: 0;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+            box-shadow:
+                0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
+                0 4px 12px rgba(10, 132, 255, 0.35);
+        }
+        .btn-login:hover {
+            transform: translateY(-1px);
+            box-shadow:
+                0 1px 0 0 rgba(255, 255, 255, 0.25) inset,
+                0 8px 20px rgba(10, 132, 255, 0.45);
+        }
+        .btn-login:active {
+            transform: translateY(0) scale(0.985);
+            box-shadow:
+                0 1px 0 0 rgba(255, 255, 255, 0.15) inset,
+                0 2px 6px rgba(10, 132, 255, 0.3);
+        }
+        .btn-login:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .error-message {
+            color: #ff3b30; /* 苹果浅色模式系统红 */
+            font-size: 13px;
+            margin-top: 14px;
+            text-align: center;
+            display: none;
+            font-weight: 500;
+        }
+        .error-message.show {
+            display: block;
+            animation: shakeError 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+        }
+        @keyframes shakeError {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-4px); }
+            40% { transform: translateX(4px); }
+            60% { transform: translateX(-3px); }
+            80% { transform: translateX(3px); }
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 14px;
+            color: #86868b;
+            font-size: 14px;
+        }
+        .loading.show {
+            display: block;
+        }
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #0a84ff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .footer {
+            text-align: center;
+            margin-top: 32px;
+            color: #86868b;
+            font-size: 12px;
+            font-weight: 400;
+        }
+        /* 响应式：窄屏切换为上下布局 */
+        @media (max-width: 720px) {
+            .login-container {
+                flex-direction: column;
+                max-width: 420px;
+                min-height: auto;
+            }
+            .brand-side {
+                padding: 38px 30px;
+            }
+            .brand-logo h1 {
+                font-size: 30px;
+            }
+            .brand-tagline {
+                font-size: 15px;
+                margin-bottom: 20px;
+            }
+            .form-side {
+                padding: 38px 30px;
+            }
+        }
+        /* 尊重用户「减少动态效果」的系统偏好 */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.001ms !important;
+                transition-duration: 0.001ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- JSEncrypt 用于 RSA 加密密码 -->
+    <script src="js/jsencrypt.min.js"></script>
+    <div class="login-container">
+        <!-- 左侧品牌展示 -->
+        <div class="brand-side">
+            <div class="brand-content">
+                <div class="brand-logo">
+                    <img src="images/terminal.png" alt="WebSSH" class="brand-logo-icon">
+                    <h1>WebSSH</h1>
+                </div>
+                <p class="brand-tagline">基于 Web 的 Linux 终端管理工具</p>
+            </div>
+        </div>
+        <!-- 右侧登录表单 -->
+        <div class="form-side">
+            <div class="form-header">
+                <h2>欢迎登录</h2>
+            </div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="username" placeholder="请输入用户名" autocomplete="username">
+                        <button type="button" class="clear-btn" data-target="username" aria-label="清除用户名"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18"/></svg></button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <div class="input-wrapper">
+                        <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password">
+                        <button type="button" class="clear-btn" data-target="password" aria-label="清除密码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18"/></svg></button>
+                    </div>
+                </div>
+                <button type="submit" class="btn-login" id="loginBtn">登录</button>
+                <div class="error-message" id="errorMessage"></div>
+                <div class="loading" id="loading">
+                    <span class="spinner"></span> 登录中...
+                </div>
+            </form>
+            <div class="footer">
+                &copy; 2026 WebSSH | youngyajun
+            </div>
+        </div>
+    </div>
+    <script>
+        // 从当前页面路径动态提取 contextPath（如 /webssh/login.html -> /webssh）
+        const contextPath = window.location.pathname.replace(/\/[^/]*$/, '');
+
+        // RSA 公钥（页面加载时从后端获取）
+        let rsaPublicKey = null;
+        // 公钥对应的 keyId，登录时回传后端用于查找私钥
+        let rsaKeyId = null;
+        // 登录锁定倒计时计时器
+        let lockCountdownTimer = null;
+
+        const loginBtn = document.getElementById('loginBtn');
+        const errorMessage = document.getElementById('errorMessage');
+
+        /**
+         * 输入框清除按钮：根据内容切换显示，点击清空并聚焦
+         */
+        document.querySelectorAll('.input-wrapper').forEach(wrapper => {
+            const input = wrapper.querySelector('input');
+            const clearBtn = wrapper.querySelector('.clear-btn');
+            // 根据是否有内容切换 has-value 类（控制清除按钮显隐）
+            const sync = () => wrapper.classList.toggle('has-value', input.value.length > 0);
+            sync();
+            input.addEventListener('input', sync);
+            clearBtn.addEventListener('click', () => {
+                input.value = '';
+                wrapper.classList.remove('has-value');
+                input.focus();
+            });
+        });
+
+        /**
+         * 启动锁定倒计时，期间禁用登录按钮
+         */
+        function startLockCountdown(seconds) {
+            clearLockCountdown();
+            let remaining = Math.max(1, Math.ceil(seconds));
+            updateLockMessage(remaining);
+            loginBtn.disabled = true;
+            lockCountdownTimer = setInterval(() => {
+                remaining--;
+                if (remaining <= 0) {
+                    clearLockCountdown();
+                    loginBtn.disabled = false;
+                    errorMessage.classList.remove('show');
+                    // 锁定结束，重新获取公钥
+                    fetchPublicKey();
+                } else {
+                    updateLockMessage(remaining);
+                }
+            }, 1000);
+        }
+
+        /**
+         * 更新锁定提示文案
+         */
+        function updateLockMessage(seconds) {
+            const min = Math.floor(seconds / 60);
+            const sec = seconds % 60;
+            const timeStr = min > 0 ? `${min}分${sec.toString().padStart(2, '0')}秒` : `${sec}秒`;
+            errorMessage.textContent = `登录失败次数过多，已锁定，请于 ${timeStr} 后重试`;
+            errorMessage.classList.add('show');
+        }
+
+        /**
+         * 清除锁定倒计时
+         */
+        function clearLockCountdown() {
+            if (lockCountdownTimer) {
+                clearInterval(lockCountdownTimer);
+                lockCountdownTimer = null;
+            }
+        }
+
+        /**
+         * 获取 RSA 公钥
+         * 公钥用于加密密码，私钥保留在后端 Session 中
+         */
+        async function fetchPublicKey() {
+            try {
+                const response = await fetch(contextPath + '/auth/public-key');
+                const data = await response.json();
+                if (data.code === 200 && data.publicKey) {
+                    // 组装 PEM 格式公钥供 JSEncrypt 使用
+                    const pemBody = data.publicKey.match(/.{1,64}/g).join('\n');
+                    rsaPublicKey = '-----BEGIN PUBLIC KEY-----\n' + pemBody + '\n-----END PUBLIC KEY-----';
+                    rsaKeyId = data.keyId;
+                    // 页面加载时若已被锁定，直接展示倒计时
+                    if (data.locked && data.lockRemainingSeconds) {
+                        startLockCountdown(data.lockRemainingSeconds);
+                    }
+                }
+            } catch (e) {
+                console.error('获取公钥失败', e);
+            }
+        }
+
+        // 页面加载时获取公钥
+        fetchPublicKey();
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loading = document.getElementById('loading');
+
+            // 处于锁定状态时禁止提交
+            if (lockCountdownTimer) {
+                return;
+            }
+
+            if (!username || !password) {
+                errorMessage.textContent = '请输入用户名和密码';
+                errorMessage.classList.add('show');
+                return;
+            }
+
+            if (!rsaPublicKey || !rsaKeyId) {
+                // 公钥未获取到，尝试重新获取
+                await fetchPublicKey();
+                if (!rsaPublicKey || !rsaKeyId) {
+                    errorMessage.textContent = '获取加密公钥失败，请刷新页面重试';
+                    errorMessage.classList.add('show');
+                    return;
+                }
+            }
+
+            // 使用 RSA 公钥加密密码
+            const encrypt = new JSEncrypt();
+            encrypt.setPublicKey(rsaPublicKey);
+            const encryptedPassword = encrypt.encrypt(password);
+            if (!encryptedPassword) {
+                errorMessage.textContent = '密码加密失败，请重试';
+                errorMessage.classList.add('show');
+                return;
+            }
+
+            loginBtn.disabled = true;
+            errorMessage.classList.remove('show');
+            loading.classList.add('show');
+
+            try {
+                const response = await fetch(contextPath + '/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, password: encryptedPassword, keyId: rsaKeyId })
+                });
+                const data = await response.json();
+                if (data.code === 200) {
+                    clearLockCountdown();
+                    window.location.href = contextPath + '/index.html';
+                } else if (data.code === 429) {
+                    // 已被锁定，启动倒计时
+                    if (data.lockRemainingSeconds) {
+                        startLockCountdown(data.lockRemainingSeconds);
+                    } else {
+                        errorMessage.textContent = data.msg || '登录失败次数过多，请稍后再试';
+                        errorMessage.classList.add('show');
+                    }
+                } else {
+                    let msg = data.msg || '登录失败';
+                    if (data.remainingAttempts !== undefined && data.remainingAttempts >= 0) {
+                        msg += `（剩余尝试次数 ${data.remainingAttempts} 次）`;
+                    }
+                    errorMessage.textContent = msg;
+                    errorMessage.classList.add('show');
+                    // 公钥已使用（一次性），需要重新获取
+                    rsaPublicKey = null;
+                    rsaKeyId = null;
+                    fetchPublicKey();
+                }
+            } catch (error) {
+                errorMessage.textContent = '网络错误，请重试';
+                errorMessage.classList.add('show');
+            } finally {
+                // 锁定期间保持禁用
+                if (!lockCountdownTimer) {
+                    loginBtn.disabled = false;
+                }
+                loading.classList.remove('show');
+            }
+        });
+    </script>
+</body>
+</html>

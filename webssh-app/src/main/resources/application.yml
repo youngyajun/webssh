@@ -1,0 +1,25 @@
+# 服务端口配置
+server:
+  # 服务端口号
+  port: 8080
+  servlet:
+    # 字符编码配置（强制 HTTP 请求/响应使用 UTF-8，避免中文乱码）
+    encoding:
+      # 字符集编码
+      charset: UTF-8
+      # 强制使用指定编码（覆盖客户端指定的 Content-Type 字符集）
+      force: true
+
+# Spring 相关配置
+spring:
+  profiles:
+    # 激活的配置文件（对应 application-webssh.yml）
+    active: webssh
+  # 文件上传/下载大小限制配置（影响 WebSSH 文件管理上传接口 /webssh/api/upload）
+  # 下载接口为流式传输，代码层面无大小限制，无需在此配置
+  servlet:
+    multipart:
+      # 单个文件最大大小（默认 1MB），上传大文件时需调大
+      max-file-size: 100MB
+      # 整个请求最大大小（默认 10MB），通常需大于 max-file-size
+      max-request-size: 500MB
