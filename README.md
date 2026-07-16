@@ -140,10 +140,6 @@ webssh:
   enabled: true
   # WebSSH 界面访问路径前缀
   context-path: /webssh
-  # WebSSH 管理界面登录账号（必填，无默认值，启动时校验）
-  username: your-account
-  # WebSSH 管理界面登录密码（必填，无默认值，建议强密码）
-  password: your-strong-password
   # SSH 连接超时（毫秒）
   timeout: 10000
   # 终端类型
@@ -154,22 +150,59 @@ webssh:
   host-key-verification: no
   # known_hosts 路径（host-key-verification=yes 时使用）
   # known-hosts: ~/.ssh/known_hosts
+  # ============================================================================
+  # WebSSH 管理界面登录账号配置（单账号与多账号可共存，用户名冲突时以多账号为准）
+  # ----------------------------------------------------------------------------
+  # 【密码强度规则】长度 8~19 位（>=8 且 <20），必须同时包含：
+  #   - 大写字母 A-Z
+  #   - 小写字母 a-z
+  #   - 数字 0-9
+  # 不符合规则的账号视为无效，启动时仅告警并跳过（不影响启动），但无法用于登录。
+  # 例如 "Abc12345" 合规；"webssh"（无大写无数字、长度不足）不合规，会被跳过。
+  #
+  # 方式一：单账号模式（向后兼容）
+  #
+  # 方式二：多账号模式（推荐）
+  #   accounts:
+  #     - username: admin
+  #       password: Admin@2024
+  #     - username: ops
+  #       password: Ops#2024abc
+  #
+  # 共存规则：
+  #   - 两者同时配置时，会合并为最终账号列表共同生效
+  #   - 若单账号的 username 与 accounts 中某账号同名，则忽略单账号（以多账号为准）
+  #   - 两者均未配置时不阻止启动，仅告警（登录将全部失败）
+  # ============================================================================
+
+  # WebSSH 管理界面登录账号（单账号模式，无默认值，启动时校验）
+  username: webssh
+  # WebSSH 管理界面登录密码（单账号模式，无默认值，须符合上方强度规则）
+  # 注意：默认值 "webssh" 不符合强度规则，会被判为无效账号无法登录，请务必修改
+  password: Webssh-2026
+
+  # 多账号列表（与 username/password 共存；用户名冲突时以多账号为准）
+  accounts: [
+#    {username: test, password: 123456},
+#    {username: root, password: 123456}
+  ]
 
   # SSH 主机列表
   hosts:
-    - name: 测试服务器
-      host: 127.0.0.1
+    - name: 【本地内网-192.168.1.166】
+      host: 192.168.1.166
       port: 22
-      username: root
-      password: ssh-password
-      
-    - name: 生产服务器
-      host: xxx.xxx.xxx.xxx
+      # 可以不配置username&password，登录后在界面手动输入
+      username:
+      password:
+
+    - name: 【测试服务器】
+      host: 192.168.1.166
       port: 22
       # === （username&password）和 （privateKey&passphrase）可以二选一 ===
       # username: root									# 可以不配置username，登录后在界面手动输入
       # password: ssh-password							# 可以不配置password，登录后在界面手动输入
-      
+
       # privateKey: /path/to/id_rsa
       # passphrase: private-key-password
 
