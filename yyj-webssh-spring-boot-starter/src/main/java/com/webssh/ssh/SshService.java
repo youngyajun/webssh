@@ -453,6 +453,9 @@ public class SshService {
         for (WebSshProperties.Host host : properties.getHosts()) {
             java.util.Map<String, Object> info = new java.util.HashMap<>();
             info.put("name", host.getName() != null ? host.getName() : host.getHost());
+            info.put("host", host.getHost());
+            info.put("port", host.getPort());
+            info.put("username", host.getUsername());
             info.put("needCredentials", needsCredentials(host));
             list.add(info);
         }

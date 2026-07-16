@@ -205,7 +205,10 @@ function createTab(host, username, password, rememberCredentials) {
         id: tabId,
         label: label,
         host: host,
-        username: username || '',
+        username: username || (hostInfo ? (hostInfo.username || '') : ''),
+        // 实际连接的 IP 和端口，用于状态栏显示 ssh://user@ip:port
+        sshHost: hostInfo ? hostInfo.host : '',
+        sshPort: hostInfo ? hostInfo.port : 22,
         password: password || '',
         terminal: term,
         fitAddon: fit,
@@ -552,12 +555,33 @@ function reorderTabs(draggedId, targetId, insertBefore) {
 function updateStatusBar(tab) {
     const statusEl = document.getElementById('connectionStatus');
     if (tab && tab.connected) {
-        statusEl.innerHTML = '<span class="status-dot connected" id="statusDot"></span>已连接';
-        statusEl.title = '主机: ' + tab.host;
+        const sshUrl = buildSshUrl(tab);
+        statusEl.innerHTML = '<span class="status-dot connected" id="statusDot"></span>' + escapeHtml(sshUrl);
+        statusEl.title = sshUrl;
     } else {
         statusEl.innerHTML = '未连接';
         statusEl.title = '';
     }
+}
+
+// 构造 ssh://user@ip:port 格式的连接信息，用于状态栏显示
+function buildSshUrl(tab) {
+    let ip = tab.sshHost || '';
+    let port = tab.sshPort || 22;
+    if (!ip) {
+        // 自定义主机：host 可能是 "IP:port" 格式
+        const h = tab.host || '';
+        const colonIdx = h.lastIndexOf(':');
+        if (colonIdx > 0 && !h.substring(0, colonIdx).includes(':')) {
+            ip = h.substring(0, colonIdx);
+            const p = parseInt(h.substring(colonIdx + 1));
+            if (p > 0 && p <= 65535) port = p;
+        } else {
+            ip = h;
+        }
+    }
+    const user = tab.username || '';
+    return 'ssh://' + user + '@' + ip + ':' + port;
 }
 
 // 标签栏相关事件（"+"按钮、右键菜单）

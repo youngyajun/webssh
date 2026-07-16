@@ -619,7 +619,8 @@ body.resizing {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--success);
+    /* 与终端光标颜色一致的高亮绿色 */
+    background: #00ff00;
     margin-right: 6px;
     vertical-align: middle;
 }
@@ -975,7 +976,8 @@ body.resizing {
     background: var(--text-dim);
 }
 .tab-item .tab-status.connected {
-    background: var(--success);
+    /* 与终端光标颜色一致的高亮绿色 */
+    background: #00ff00;
 }
 .tab-item .tab-close {
     width: 18px;
