@@ -1,8 +1,8 @@
 /* WebSSH 终端页面样式 */
 
 /* ======================== 主题变量 ======================== */
-/* 通过 body[data-theme] 切换暗/亮主题，所有非顶部区域使用变量引用颜色。
-   顶部 .header 固定使用暗色变量，不受主题切换影响。 */
+/* 通过 body[data-theme] 切换暗/亮主题，所有区域（含顶部 .header）统一使用变量引用颜色，
+   随主题切换同时生效。 */
 
 body {
     /* 暗色主题（默认） */
@@ -73,27 +73,6 @@ body[data-theme="light"] {
     --shadow-suggest: 0 4px 12px rgba(140, 149, 159, 0.3);
 }
 
-/* 顶部导航栏固定暗色，不受主题切换影响 */
-.header {
-    --bg-base: #0d1117;
-    --bg-panel: #161b22;
-    --bg-elevated: #21262d;
-    --bg-hover: #21262d;
-    --bg-active: rgba(31, 111, 235, 0.2);
-    --border: #30363d;
-    --border-light: #21262d;
-    --text: #c9d1d9;
-    --text-muted: #8b949e;
-    --text-dim: #484f58;
-    --accent: #58a6ff;
-    --accent-light: #79c0ff;
-    --accent-hover: #1f6feb;
-    --danger: #f85149;
-    --success: #3fb950;
-    --scrollbar-thumb: #30363d;
-    --scrollbar-thumb-hover: #484f58;
-}
-
 /* ======================== 全局重置与基础样式 ======================== */
 /* 盒模型重置、全局滚动条样式（含 Firefox 的 scrollbar-width 与 WebKit 伪元素） */
 
@@ -114,7 +93,7 @@ body {
 /* 顶栏布局：左侧 logo + 主机/会话/主题选择器；右侧操作与账号信息 */
 
 .header {
-    background: #444c56;
+    background: var(--bg-elevated);
     padding: 10px 20px;
     display: flex;
     align-items: center;
@@ -149,11 +128,11 @@ body {
     height: 32px;
     padding: 0 10px;
     border-radius: 6px;
-    background: #30363d40;
+    background: color-mix(in srgb, var(--bg-elevated) 30%, transparent);
     transition: background 0.2s;
 }
 .user-group:hover {
-    background: #30363d80;
+    background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
 }
 .user-group .user-info {
     max-width: 120px;
@@ -179,24 +158,24 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 32px;
+    height: 28px;
 }
 .selector-label {
     font-size: 13px;
     color: var(--text-muted);
     white-space: nowrap;
     user-select: none;
-    line-height: 32px;
+    line-height: 28px;
 }
 .host-selector {
     background: var(--bg-base);
     border: 1px solid var(--border);
     border-radius: 6px;
-    height: 32px;
-    padding: 0 12px;
+    height: 28px;
+    padding: 0 10px;
     color: var(--text);
-    font-size: 14px;
-    line-height: 30px;
+    font-size: 13px;
+    line-height: 26px;
     min-width: 200px;
     cursor: pointer;
 }
@@ -1171,11 +1150,11 @@ body.resizing {
     background: var(--bg-base);
     border: 1px solid var(--border);
     border-radius: 6px;
-    height: 32px;
-    padding: 0 12px;
+    height: 28px;
+    padding: 0 10px;
     color: var(--text);
-    font-size: 14px;
-    line-height: 30px;
+    font-size: 13px;
+    line-height: 26px;
     cursor: pointer;
 }
 .theme-selector:focus {
