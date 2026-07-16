@@ -801,6 +801,11 @@ body.resizing {
     width: 18px;
     text-align: center;
 }
+.context-menu-item .menu-icon img {
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
+}
 .context-menu-separator {
     height: 1px;
     background: var(--border);
