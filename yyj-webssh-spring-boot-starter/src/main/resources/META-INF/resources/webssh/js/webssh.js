@@ -396,6 +396,9 @@ function switchTab(tabId) {
         openCredentialForPendingTab(newTab);
     }
 
+    // 切换标签页后同步监控信息显示（启停依据活跃标签页的文件会话）
+    updateMonitorState();
+
     saveTabsState();
 }
 
@@ -498,6 +501,8 @@ function closeTab(tabId) {
             document.getElementById('fileList').innerHTML = '';
             document.getElementById('breadcrumb').innerHTML = '';
             document.getElementById('currentPath').textContent = '路径: -';
+            // 无活跃标签页，停止监控
+            stopMonitor();
         }
     }
 
@@ -550,6 +555,8 @@ async function connectFileSessionForTab(tab, username, password) {
                 if (tab.id === activeTabId) {
                     fileSessionId = tab.fileSessionId;
                     syncInitialCwd();
+                    // 文件会话就绪后启动服务器监控
+                    updateMonitorState();
                 } else {
                     fileSessionReconnecting = false;
                 }
@@ -817,6 +824,290 @@ function buildSshUrl(tab) {
     const user = tab.username || '';
     return 'ssh://' + user + '@' + ip + ':' + port;
 }
+
+// ===== 系统监控信息（CPU/RAM/Disk/Load/Net）=====
+// 仅对当前活跃标签页的主机轮询，3 秒一次；切换/断开标签页时自动启停
+let monitorTimer = null;
+const MONITOR_INTERVAL = 3000;
+
+// 根据当前活跃标签页状态启停监控
+function updateMonitorState() {
+    const tab = getActiveTab();
+    if (tab && tab.fileSessionId) {
+        startMonitor();
+    } else {
+        stopMonitor();
+    }
+}
+
+function startMonitor() {
+    // 已有定时器则不重复启动，但立即刷新一次以快速反映切换后的主机
+    if (!monitorTimer) {
+        monitorTimer = setInterval(fetchMonitor, MONITOR_INTERVAL);
+    }
+    fetchMonitor();
+}
+
+function stopMonitor() {
+    if (monitorTimer) {
+        clearInterval(monitorTimer);
+        monitorTimer = null;
+    }
+    const el = document.getElementById('sysMonitor');
+    if (el) el.classList.remove('show');
+}
+
+async function fetchMonitor() {
+    const tab = getActiveTab();
+    if (!tab || !tab.fileSessionId) {
+        stopMonitor();
+        return;
+    }
+    try {
+        const resp = await fetch(contextPath + '/api/monitor?sessionId=' + encodeURIComponent(tab.fileSessionId));
+        const data = await resp.json();
+        if (data.code === 200 && data.data) {
+            updateMonitorUI(data.data);
+        } else if (data.code === 401) {
+            // 会话失效，停止监控
+            stopMonitor();
+        }
+    } catch (e) {
+        // 网络异常等，静默忽略，下次轮询重试
+    }
+}
+
+function updateMonitorUI(data) {
+    const el = document.getElementById('sysMonitor');
+    if (!el) return;
+    const cpu = parseFloat(data.cpu) || 0;
+    const mem = parseFloat(data.mem) || 0;
+    const disk = parseFloat(data.disk) || 0;
+    const load = parseFloat(data.load) || 0;
+    const rx = parseInt(data.rx) || 0;
+    const tx = parseInt(data.tx) || 0;
+    const cls = v => v >= 90 ? 'mon-danger' : (v >= 75 ? 'mon-warn' : '');
+    el.innerHTML =
+        '<span class="mon-item ' + cls(cpu) + '" onclick="openMonitorDetail(\'cpu\')" title="点击查看 CPU 详情"><span class="mon-label">CPU</span><span class="mon-value">' + cpu.toFixed(0) + '%</span></span>' +
+        '<span class="mon-sep">|</span>' +
+        '<span class="mon-item ' + cls(mem) + '" onclick="openMonitorDetail(\'mem\')" title="点击查看 RAM 详情"><span class="mon-label">RAM</span><span class="mon-value">' + mem.toFixed(0) + '%</span></span>' +
+        '<span class="mon-sep">|</span>' +
+        '<span class="mon-item ' + cls(disk) + '" onclick="openMonitorDetail(\'disk\')" title="点击查看 Disk 详情"><span class="mon-label">Disk</span><span class="mon-value">' + disk.toFixed(0) + '%</span></span>' +
+        '<span class="mon-sep">|</span>' +
+        '<span class="mon-item" onclick="openMonitorDetail(\'load\')" title="点击查看 Load 详情"><span class="mon-label">Load</span><span class="mon-value">' + load.toFixed(2) + '</span></span>' +
+        '<span class="mon-sep">|</span>' +
+        '<span class="mon-item" onclick="openMonitorDetail(\'net\')" title="点击查看 Net 详情"><span class="mon-label">Net</span><span class="mon-value">↑' + formatNetRate(tx) + ' ↓' + formatNetRate(rx) + '</span></span>';
+    el.classList.add('show');
+}
+
+function formatNetRate(bytes) {
+    if (!bytes || bytes < 0) bytes = 0;
+    if (bytes < 1024) return bytes + 'B/s';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB/s';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + 'MB/s';
+    return (bytes / 1024 / 1024 / 1024).toFixed(1) + 'GB/s';
+}
+
+// ===== 监控详情弹窗（点击 CPU/RAM/Disk/Load/Net 打开，动态刷新）=====
+let detailTimer = null;
+let detailType = null;
+
+function openMonitorDetail(type) {
+    detailType = type;
+    const titles = { cpu: 'CPU 详情', mem: 'RAM 详情', disk: 'Disk 详情', load: 'Load 详情', net: 'Net 详情' };
+    document.getElementById('monitorDetailTitle').textContent = titles[type] || '监控详情';
+    document.getElementById('monitorDetailContent').innerHTML = '<div class="detail-loading">加载中...</div>';
+    document.getElementById('monitorDetailModal').classList.add('show');
+    fetchMonitorDetail();
+    if (detailTimer) clearInterval(detailTimer);
+    detailTimer = setInterval(fetchMonitorDetail, 3000);
+}
+
+function closeMonitorDetail() {
+    document.getElementById('monitorDetailModal').classList.remove('show');
+    if (detailTimer) { clearInterval(detailTimer); detailTimer = null; }
+    detailType = null;
+}
+
+async function fetchMonitorDetail() {
+    if (!detailType) return;
+    const tab = getActiveTab();
+    if (!tab || !tab.fileSessionId) { closeMonitorDetail(); return; }
+    try {
+        const resp = await fetch(contextPath + '/api/monitor/detail?type=' + detailType + '&sessionId=' + encodeURIComponent(tab.fileSessionId));
+        const data = await resp.json();
+        if (data.code === 200 && data.data) {
+            renderMonitorDetail(detailType, data.data);
+        } else if (data.code === 401) {
+            closeMonitorDetail();
+        }
+    } catch (e) { /* 网络异常静默，下次轮询重试 */ }
+}
+
+function renderMonitorDetail(type, d) {
+    const el = document.getElementById('monitorDetailContent');
+    let html = '';
+    if (type === 'cpu') html = renderCpuDetail(d);
+    else if (type === 'mem') html = renderMemDetail(d);
+    else if (type === 'disk') html = renderDiskDetail(d);
+    else if (type === 'load') html = renderLoadDetail(d);
+    else if (type === 'net') html = renderNetDetail(d);
+    el.innerHTML = html || '<div class="detail-loading">暂无数据</div>';
+}
+
+// ---- 详情渲染辅助函数 ----
+function _parseLong(v) { const n = parseInt(v); return isNaN(n) ? 0 : n; }
+function formatBytes(b) {
+    if (!b || b < 0) b = 0;
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1073741824).toFixed(2) + ' GB';
+}
+function _barColor(pct) {
+    pct = parseFloat(pct) || 0;
+    if (pct >= 90) return 'var(--danger)';
+    if (pct >= 75) return '#d29922';
+    return 'var(--accent)';
+}
+function _statCards(arr) {
+    return '<div class="detail-stats">' + arr.map(function (kv) {
+        const wide = kv[2] === true;
+        return '<div class="stat-card' + (wide ? ' stat-card-wide' : '') + '"><div class="stat-label">' + kv[0] + '</div><div class="stat-value">' + kv[1] + '</div></div>';
+    }).join('') + '</div>';
+}
+function _sectionTitle(t) { return '<div class="detail-section-title">' + t + '</div>'; }
+function _progressRow(label, pct, unit, color) {
+    pct = parseFloat(pct) || 0;
+    const w = Math.min(100, Math.max(0, pct));
+    return '<div class="progress-row"><span class="progress-label" title="' + label + '">' + label + '</span>' +
+        '<div class="progress-bar"><div class="progress-fill" style="width:' + w + '%;background:' + color + '"></div></div>' +
+        '<span class="progress-text">' + pct.toFixed(1) + unit + '</span></div>';
+}
+function _detailList(arr) {
+    return '<table class="detail-table" style="margin-top:8px"><tbody>' + arr.map(function (kv) {
+        return '<tr><td style="color:var(--text-muted)">' + kv[0] + '</td><td style="text-align:right">' + kv[1] + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+function renderCpuDetail(d) {
+    const usage = parseFloat(d.usage) || 0;
+    const cores = parseInt(d.cores) || 0;
+    const coreKeys = Object.keys(d).filter(function (k) { return /^cpu\d+$/.test(k); })
+        .sort(function (a, b) { return parseInt(a.slice(3)) - parseInt(b.slice(3)); });
+    let html = _statCards([
+        ['型号', escapeHtml(d.model || '-'), true],
+        ['核心数', cores],
+        ['频率', d.freq ? (parseFloat(d.freq)).toFixed(0) + ' MHz' : '-'],
+        ['运行时间', d.uptime_fmt || '-']
+    ]);
+    html += _sectionTitle('总体使用率');
+    html += _progressRow('CPU', usage, '%', _barColor(usage));
+    if (coreKeys.length > 0) {
+        html += _sectionTitle('各核心使用率');
+        coreKeys.forEach(function (k) {
+            const v = parseFloat(d[k]) || 0;
+            html += _progressRow('核心 ' + k.slice(3), v, '%', _barColor(v));
+        });
+    }
+    return html;
+}
+
+function renderMemDetail(d) {
+    const total = _parseLong(d.mem_total);
+    const avail = _parseLong(d.mem_available);
+    const used = total - avail;
+    const free = _parseLong(d.mem_free);
+    const buffers = _parseLong(d.mem_buffers);
+    const cached = _parseLong(d.mem_cached);
+    const swapTotal = _parseLong(d.swap_total);
+    const swapFree = _parseLong(d.swap_free);
+    const swapUsed = swapTotal - swapFree;
+    let html = _statCards([
+        ['总内存', formatBytes(total)],
+        ['已用', formatBytes(used)],
+        ['可用', formatBytes(avail)],
+        ['Swap 已用', formatBytes(swapUsed)]
+    ]);
+    const memPct = total > 0 ? (used / total * 100) : 0;
+    html += _sectionTitle('内存使用');
+    html += _progressRow('RAM', memPct, '%', _barColor(memPct));
+    html += _detailList([['空闲', formatBytes(free)], ['缓冲(Buffers)', formatBytes(buffers)], ['缓存(Cached)', formatBytes(cached)]]);
+    if (swapTotal > 0) {
+        const swapPct = swapUsed / swapTotal * 100;
+        html += _sectionTitle('Swap 使用');
+        html += _progressRow('Swap', swapPct, '%', _barColor(swapPct));
+        html += _detailList([['Swap 总量', formatBytes(swapTotal)], ['Swap 空闲', formatBytes(swapFree)]]);
+    }
+    return html;
+}
+
+function renderDiskDetail(d) {
+    const parts = d.partitions || [];
+    let html = _statCards([['分区数量', parts.length]]);
+    if (parts.length === 0) return html + '<div class="detail-loading">无磁盘数据</div>';
+    html += _sectionTitle('分区列表');
+    html += '<table class="detail-table"><thead><tr><th>文件系统</th><th>总大小</th><th>已用</th><th>可用</th><th>使用率</th><th>挂载点</th></tr></thead><tbody>';
+    parts.forEach(function (p) {
+        const use = parseInt(p.use) || 0;
+        html += '<tr><td>' + escapeHtml(p.fs) + '</td><td>' + formatBytes(p.size * 1024) + '</td><td>' + formatBytes(p.used * 1024) +
+            '</td><td>' + formatBytes(p.avail * 1024) + '</td><td style="color:' + _barColor(use) + '">' + use + '%</td><td>' + escapeHtml(p.mount) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    html += _sectionTitle('使用率');
+    parts.forEach(function (p) {
+        const use = parseInt(p.use) || 0;
+        html += _progressRow(p.mount || p.fs, use, '%', _barColor(use));
+    });
+    return html;
+}
+
+function renderLoadDetail(d) {
+    const cores = parseInt(d.cores) || 1;
+    const l1 = parseFloat(d.load1) || 0;
+    const l5 = parseFloat(d.load5) || 0;
+    const l15 = parseFloat(d.load15) || 0;
+    let html = _statCards([
+        ['1分钟负载', l1.toFixed(2)],
+        ['5分钟负载', l5.toFixed(2)],
+        ['15分钟负载', l15.toFixed(2)],
+        ['CPU核心数', cores],
+        ['进程数', d.proc || '-'],
+        ['运行时间', d.uptime_fmt || '-']
+    ]);
+    html += _sectionTitle('负载占比（相对核心数）');
+    html += _progressRow('1分钟', l1 / cores * 100, '%', _barColor(l1 / cores * 100));
+    html += _progressRow('5分钟', l5 / cores * 100, '%', _barColor(l5 / cores * 100));
+    html += _progressRow('15分钟', l15 / cores * 100, '%', _barColor(l15 / cores * 100));
+    return html;
+}
+
+function renderNetDetail(d) {
+    const ifaces = d.interfaces || [];
+    const totalRx = _parseLong(d.total_rx_rate);
+    const totalTx = _parseLong(d.total_tx_rate);
+    let html = _statCards([
+        ['总下载速率', '↓ ' + formatNetRate(totalRx)],
+        ['总上传速率', '↑ ' + formatNetRate(totalTx)],
+        ['接口数量', ifaces.length]
+    ]);
+    if (ifaces.length === 0) return html + '<div class="detail-loading">无网络接口</div>';
+    html += _sectionTitle('网络接口');
+    html += '<table class="detail-table"><thead><tr><th>接口</th><th>接收(累计)</th><th>↓下载速率</th><th>发送(累计)</th><th>↑上传速率</th></tr></thead><tbody>';
+    ifaces.forEach(function (it) {
+        html += '<tr><td>' + escapeHtml(it.name) + '</td><td>' + formatBytes(it.rx) + '</td><td>' + formatNetRate(it.rxRate) +
+            '</td><td>' + formatBytes(it.tx) + '</td><td>' + formatNetRate(it.txRate) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+}
+
+// 详情弹窗关闭事件（关闭按钮 + 点击遮罩）
+document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('closeMonitorDetail').addEventListener('click', closeMonitorDetail);
+    const modal = document.getElementById('monitorDetailModal');
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeMonitorDetail(); });
+});
 
 // 标签栏相关事件（"+"按钮、右键菜单）
 // 新建会话（统一入口：标签栏 + 按钮、空状态按钮、主机选择器）
@@ -1876,6 +2167,8 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
         tab.connected = false;
         if (tab.id === activeTabId) {
             document.getElementById('connectionStatus').innerHTML = '未连接';
+            // 终端断开时停止监控，重连成功后由文件会话重建回调恢复
+            stopMonitor();
         }
         tab.terminal.write('\r\n\x1b[31m连接已断开\x1b[0m\r\n');
         renderTabBar();
@@ -2507,6 +2800,13 @@ function showSuggestions(suggestions) {
     ).join('');
     container.classList.add('show');
     suggestionIndex = -1;
+
+    // 根据下拉框在视口中的实际位置动态计算最大高度，使其尽量多显示且不超出视口底部
+    // 内容少时高度自适应内容；内容多时受可用空间限制并滚动
+    const rect = container.getBoundingClientRect();
+    const availableHeight = window.innerHeight - rect.top - 8; // 留 8px 底部边距
+    const maxHeight = Math.max(120, Math.min(availableHeight, 480)); // 限制在 120~480px
+    container.style.maxHeight = maxHeight + 'px';
 
     // 点击建议项
     container.querySelectorAll('.path-suggestion-item').forEach(item => {

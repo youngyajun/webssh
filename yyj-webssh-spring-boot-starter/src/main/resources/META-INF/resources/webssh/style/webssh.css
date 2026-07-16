@@ -397,7 +397,8 @@ body.resizing {
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: 6px;
-    max-height: 200px;
+    /* 兜底最大高度；实际由 JS 根据视口可用空间动态调整 */
+    max-height: 400px;
     overflow-y: auto;
     z-index: 100;
     box-shadow: var(--shadow-suggest);
@@ -1253,4 +1254,163 @@ body.resizing {
 .font-size-hint.show {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
+}
+
+/* ======================== 系统监控信息 ======================== */
+/* 状态栏中间区域：CPU / RAM / Disk / Load / Net 实时监控，随活跃标签页主机更新 */
+
+.sys-monitor {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+    user-select: none;
+    /* 配合 status-bar 的 space-between，使监控信息在连接状态与路径之间居中 */
+    margin: 0 auto;
+}
+.sys-monitor.show {
+    display: inline-flex;
+}
+.sys-monitor .mon-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.sys-monitor .mon-label {
+    color: var(--text-dim);
+    font-weight: 600;
+}
+.sys-monitor .mon-value {
+    color: var(--text);
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+.sys-monitor .mon-sep {
+    color: var(--text-dim);
+}
+/* 负载分级配色：≥90% 危险，≥75% 警告 */
+.sys-monitor .mon-warn .mon-value { color: #d29922; }
+.sys-monitor .mon-danger .mon-value { color: var(--danger); }
+/* 监控项可点击：hover 高亮提示可查看详情 */
+.sys-monitor .mon-item {
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.15s;
+}
+.sys-monitor .mon-item:hover {
+    background: var(--bg-hover);
+}
+
+/* ======================== 监控详情弹窗 ======================== */
+/* 卡片网格、进度条、数据表格等，用于 CPU/RAM/Disk/Load/Net 详情 */
+
+.monitor-detail { font-size: 13px; }
+.monitor-detail .detail-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.monitor-detail .stat-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.monitor-detail .stat-card .stat-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+.monitor-detail .stat-card .stat-value {
+    color: var(--text);
+    font-size: 17px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-weight: 600;
+    word-break: break-word;
+    line-height: 1.4;
+}
+/* 占满整行的卡片（用于长文本如 CPU 型号） */
+.monitor-detail .stat-card-wide {
+    grid-column: 1 / -1;
+}
+.monitor-detail .stat-card-wide .stat-value {
+    font-size: 15px;
+    line-height: 1.5;
+}
+.monitor-detail .detail-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 18px 0 10px;
+}
+.monitor-detail .progress-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.monitor-detail .progress-row .progress-label {
+    width: 130px;
+    color: var(--text-muted);
+    font-size: 13px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.monitor-detail .progress-bar {
+    flex: 1;
+    height: 12px;
+    background: var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.monitor-detail .progress-fill {
+    height: 100%;
+    border-radius: 6px;
+    transition: width 0.4s ease, background 0.3s ease;
+}
+.monitor-detail .progress-row .progress-text {
+    width: 110px;
+    text-align: right;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    color: var(--text);
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+.monitor-detail .detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+}
+.monitor-detail .detail-table th,
+.monitor-detail .detail-table td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border-light);
+    text-align: left;
+    font-size: 13px;
+    white-space: nowrap;
+}
+.monitor-detail .detail-table th {
+    color: var(--text-muted);
+    font-weight: 600;
+    background: var(--bg-elevated);
+}
+.monitor-detail .detail-table td {
+    color: var(--text);
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+/* 允许换行的单元格（如挂载点、文件系统名） */
+.monitor-detail .detail-table td.wrap-cell {
+    white-space: normal;
+    word-break: break-all;
+}
+.monitor-detail .detail-loading {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-muted);
 }

@@ -104,6 +104,7 @@
             </div>
             <div class="status-bar">
                 <span id="connectionStatus"><span class="status-dot" id="statusDot"></span>未连接</span>
+                <span id="sysMonitor" class="sys-monitor"></span>
                 <span id="currentPath" title="点击复制路径到剪切板">路径: -</span>
             </div>
         </div>
@@ -344,6 +345,19 @@
                 <div id="logContent" class="log-content">
                     <!-- 动态填充 -->
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 监控详情弹窗（CPU/RAM/Disk/Load/Net） -->
+    <div class="modal" id="monitorDetailModal">
+        <div class="modal-content" style="width: 90vw; max-width: 1180px; height: 82vh; max-height: 82vh;">
+            <div class="modal-header">
+                <span class="modal-title" id="monitorDetailTitle">监控详情</span>
+                <button class="modal-close" id="closeMonitorDetail">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="monitorDetailContent" class="monitor-detail"></div>
             </div>
         </div>
     </div>

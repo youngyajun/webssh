@@ -1036,6 +1036,255 @@ public class WebSshFileController {
     }
 
     /**
+     * 获取服务器系统监控信息（CPU、内存、磁盘、负载、网络速率）
+     * 通过 SSH exec 执行组合命令采集 /proc 与 df 数据；
+     * 网络速率基于会话级临时状态文件做差值计算（首次为 0）。
+     */
+    @GetMapping("/monitor")
+    public Map<String, Object> getMonitorInfo(@RequestParam(required = false) String sessionId,
+                                               HttpSession httpSession) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            sessionId = resolveSessionId(sessionId, httpSession);
+            if (sessionId == null || sessionId.isEmpty()) {
+                result.put("code", 401);
+                result.put("msg", "请先建立SSH连接");
+                return result;
+            }
+            String cmd = buildMonitorCommand(sessionId);
+            String output = sshService.executeCommand(sessionId, cmd);
+            Map<String, Object> stats = parseMonitorOutput(output);
+            result.put("code", 200);
+            result.put("data", stats);
+        } catch (Exception e) {
+            if (isSessionExpiredError(e)) {
+                log.warn("WebSSH: 文件会话已失效: {}", e.getMessage());
+                result.put("code", 401);
+                result.put("msg", "SSH会话已失效");
+            } else {
+                log.error("WebSSH: 获取监控信息失败", e);
+                result.put("code", 500);
+                result.put("msg", e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 构造采集系统监控信息的组合 shell 命令
+     * 输出 key=value 格式（cpu/mem/disk/load/rx/tx），其中 rx/tx 为字节/秒
+     *
+     * 采集方式：
+     * - CPU：读取 /proc/stat 两次（间隔 0.3s）计算使用率
+     * - 内存：/proc/meminfo 的 MemTotal 与 MemAvailable
+     * - 磁盘：df 根分区使用率
+     * - 负载：/proc/loadavg 的 1 分钟平均
+     * - 网络：/proc/net/dev 累计收发字节，与上次采样（状态文件）做差除以时间间隔
+     */
+    private String buildMonitorCommand(String sessionId) {
+        // 用 sessionId 派生安全的状态文件名，保存上次网络字节计数用于速率差值计算
+        String safeKey = sessionId.replaceAll("[^A-Za-z0-9]", "");
+        return "F=/tmp/.webssh_mon_" + safeKey + ";" +
+                "PREV_RX=0;PREV_TX=0;PREV_TS=0;" +
+                "[ -f \"$F\" ] && . \"$F\";" +
+                "C1=$(awk '/^cpu /{s=0;for(i=2;i<=8;i++)s+=$i;print s;exit}' /proc/stat);" +
+                "I1=$(awk '/^cpu /{print $5;exit}' /proc/stat);" +
+                "sleep 0.3;" +
+                "C2=$(awk '/^cpu /{s=0;for(i=2;i<=8;i++)s+=$i;print s;exit}' /proc/stat);" +
+                "I2=$(awk '/^cpu /{print $5;exit}' /proc/stat);" +
+                "CPU=$(awk -v c1=$C1 -v i1=$I1 -v c2=$C2 -v i2=$I2 'BEGIN{dt=c2-c1;di=i2-i1;if(dt>0)printf \"%.1f\",(dt-di)/dt*100;else print 0}');" +
+                "MEM=$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{if(t>0)printf \"%.1f\",(t-a)/t*100;else print 0}' /proc/meminfo);" +
+                "DISK=$(df -P / 2>/dev/null | awk 'NR==2{gsub(/%/,\"\");print $5}');" +
+                "LOAD=$(awk '{print $1}' /proc/loadavg);" +
+                "NET=$(awk '/:/ && $1!=\"lo:\" {r+=$2;t+=$10}END{print r+0,t+0}' /proc/net/dev);" +
+                "RX=$(echo $NET | awk '{print $1}');TX=$(echo $NET | awk '{print $2}');" +
+                "TS=$(date +%s);" +
+                "RXRATE=0;TXRATE=0;" +
+                "if [ -n \"$PREV_RX\" ] && [ \"$PREV_TS\" -gt 0 ] 2>/dev/null;then IV=$((TS-PREV_TS));if [ $IV -gt 0 ];then RXRATE=$(( (RX-PREV_RX)/IV ));TXRATE=$(( (TX-PREV_TX)/IV ));fi;[ $RXRATE -lt 0 ] && RXRATE=0;[ $TXRATE -lt 0 ] && TXRATE=0;fi;" +
+                "printf 'PREV_RX=%s\\nPREV_TX=%s\\nPREV_TS=%s\\n' $RX $TX $TS > \"$F\";" +
+                "printf 'cpu=%s\\nmem=%s\\ndisk=%s\\nload=%s\\nrx=%s\\ntx=%s\\n' \"$CPU\" \"$MEM\" \"$DISK\" \"$LOAD\" \"$RXRATE\" \"$TXRATE\"";
+    }
+
+    /**
+     * 解析监控命令输出的 key=value 行为 Map
+     */
+    private Map<String, Object> parseMonitorOutput(String output) {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        if (output == null) {
+            return stats;
+        }
+        for (String line : output.split("\n")) {
+            int eq = line.indexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            String key = line.substring(0, eq).trim();
+            String val = line.substring(eq + 1).trim();
+            // 跳过 executeCommand 在非零退出码时追加的 [exit code: N] 行
+            if (key.startsWith("[")) {
+                continue;
+            }
+            stats.put(key, val);
+        }
+        return stats;
+    }
+
+    /**
+     * 获取服务器监控详情（CPU/RAM/Disk/Load/Net）
+     * 按 type 执行不同采集命令，返回更丰富的结构化数据
+     */
+    @GetMapping("/monitor/detail")
+    public Map<String, Object> getMonitorDetail(@RequestParam String type,
+                                                 @RequestParam(required = false) String sessionId,
+                                                 HttpSession httpSession) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            sessionId = resolveSessionId(sessionId, httpSession);
+            if (sessionId == null || sessionId.isEmpty()) {
+                result.put("code", 401);
+                result.put("msg", "请先建立SSH连接");
+                return result;
+            }
+            String cmd = buildDetailCommand(type, sessionId);
+            if (cmd == null) {
+                result.put("code", 400);
+                result.put("msg", "不支持的监控类型: " + type);
+                return result;
+            }
+            String output = sshService.executeCommand(sessionId, cmd);
+            Map<String, Object> data = parseDetailOutput(output);
+            result.put("code", 200);
+            result.put("type", type);
+            result.put("data", data);
+        } catch (Exception e) {
+            if (isSessionExpiredError(e)) {
+                log.warn("WebSSH: 文件会话已失效: {}", e.getMessage());
+                result.put("code", 401);
+                result.put("msg", "SSH会话已失效");
+            } else {
+                log.error("WebSSH: 获取监控详情失败 type={}", type, e);
+                result.put("code", 500);
+                result.put("msg", e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 按监控类型构造详情采集命令
+     * 输出约定：
+     * - 普通字段：key=value 每行一个
+     * - 列表项：part|fs|size|used|avail|use|mount（磁盘分区）
+     *           iface|name|rx|tx|rxRate|txRate（网络接口）
+     */
+    private String buildDetailCommand(String type, String sessionId) {
+        String safeKey = sessionId.replaceAll("[^A-Za-z0-9]", "");
+        switch (type) {
+            case "cpu":
+                return "MODEL=$(awk -F: '/model name/{gsub(/^ +/,\"\",$2);print $2;exit}' /proc/cpuinfo);" +
+                        "CORES=$(grep -c '^processor' /proc/cpuinfo);" +
+                        "FREQ=$(awk -F: '/cpu MHz/{gsub(/^ +/,\"\",$2);print $2;exit}' /proc/cpuinfo);" +
+                        "UP=$(awk '{print int($1)}' /proc/uptime);" +
+                        "UPF=$(awk '{d=int($1/86400);h=int(($1%86400)/3600);m=int(($1%3600)/60);printf \"%d天 %d时 %d分\",d,h,m}' /proc/uptime);" +
+                        "T1=$(awk '/^cpu /{s=0;for(i=2;i<=8;i++)s+=$i;print s;exit}' /proc/stat);I1=$(awk '/^cpu /{print $5;exit}' /proc/stat);" +
+                        "C1=$(awk '/^cpu[0-9]/{s=0;for(i=2;i<=8;i++)s+=$i;print $1,s,$5}' /proc/stat);" +
+                        "sleep 0.3;" +
+                        "T2=$(awk '/^cpu /{s=0;for(i=2;i<=8;i++)s+=$i;print s;exit}' /proc/stat);I2=$(awk '/^cpu /{print $5;exit}' /proc/stat);" +
+                        "C2=$(awk '/^cpu[0-9]/{s=0;for(i=2;i<=8;i++)s+=$i;print $1,s,$5}' /proc/stat);" +
+                        "TOTAL=$(awk -v t1=$T1 -v i1=$I1 -v t2=$T2 -v i2=$I2 'BEGIN{d=t2-t1;di=i2-i1;if(d>0)printf \"%.1f\",(d-di)/d*100;else print 0}');" +
+                        "printf 'model=%s\\ncores=%s\\nfreq=%s\\nuptime=%s\\nuptime_fmt=%s\\nusage=%s\\n' \"$MODEL\" \"$CORES\" \"$FREQ\" \"$UP\" \"$UPF\" \"$TOTAL\";" +
+                        "awk -v a=\"$C1\" -v b=\"$C2\" 'BEGIN{na=split(a,la,\"\\n\");split(b,lb,\"\\n\");for(i=1;i<=na;i++){if(la[i]==\"\")continue;split(la[i],x,\" \");split(lb[i],y,\" \");dt=y[2]-x[2];di=y[3]-x[3];if(dt>0)printf \"%s=%.1f\\n\",x[1],(dt-di)/dt*100;else printf \"%s=0\\n\",x[1]}}'";
+            case "mem":
+                return "awk '/MemTotal/{t=$2}/MemFree/{f=$2}/MemAvailable/{a=$2}/Buffers/{b=$2}/Cached/{c=$2}/SwapTotal/{st=$2}/SwapFree/{sf=$2}END{printf \"mem_total=%d\\nmem_free=%d\\nmem_available=%d\\nmem_buffers=%d\\nmem_cached=%d\\nswap_total=%d\\nswap_free=%d\\n\",t,f,a,b,c,st,sf}' /proc/meminfo";
+            case "disk":
+                return "df -P 2>/dev/null | awk 'NR>1{gsub(/%/,\"\",$5);printf \"part|%s|%s|%s|%s|%s|%s\\n\",$1,$2,$3,$4,$5,$6}'";
+            case "load":
+                return "L=$(cat /proc/loadavg);" +
+                        "L1=$(echo $L | awk '{print $1}');L5=$(echo $L | awk '{print $2}');L15=$(echo $L | awk '{print $3}');PROC=$(echo $L | awk '{print $4}');" +
+                        "CORES=$(grep -c '^processor' /proc/cpuinfo);" +
+                        "UP=$(awk '{print int($1)}' /proc/uptime);" +
+                        "UPF=$(awk '{d=int($1/86400);h=int(($1%86400)/3600);m=int(($1%3600)/60);printf \"%d天 %d时 %d分\",d,h,m}' /proc/uptime);" +
+                        "printf 'load1=%s\\nload5=%s\\nload15=%s\\nproc=%s\\ncores=%s\\nuptime=%s\\nuptime_fmt=%s\\n' \"$L1\" \"$L5\" \"$L15\" \"$PROC\" \"$CORES\" \"$UP\" \"$UPF\"";
+            case "net":
+                return "F=/tmp/.webssh_mon_dnet_" + safeKey + ";" +
+                        "TS=$(date +%s);" +
+                        "NOW=$(awk '/:/ && $1!=\"lo:\" {gsub(/:/,\"\",$1);print $1,$2,$10}' /proc/net/dev);" +
+                        "PREV=\"\";[ -f \"$F\" ] && PREV=$(cat \"$F\");" +
+                        "{ echo \"ts $TS\"; printf '%s\\n' \"$NOW\"; } > \"$F\";" +
+                        "awk -v now=\"$NOW\" -v prev=\"$PREV\" -v ts=\"$TS\" 'BEGIN{" +
+                        "if(prev!=\"\"){n=split(prev,lp,\"\\n\");for(i=1;i<=n;i++){split(lp[i],p,\" \");if(p[1]==\"ts\")pts=p[2];else{pm[p[1]]=p[2];pm[p[1]\"t\"]=p[3]}}}" +
+                        "if(pts==\"\")pts=ts;nn=split(now,ln,\"\\n\");trxr=0;ttxr=0;" +
+                        "for(i=1;i<=nn;i++){split(ln[i],x,\" \");if(x[1]==\"\")continue;rx=x[2]+0;tx=x[3]+0;rrate=0;trate=0;" +
+                        "if(pm[x[1]]!=\"\"&&ts>pts){iv=ts-pts;if(iv>0){rrate=int((rx-pm[x[1]])/iv);trate=int((tx-pm[x[1]\"t\"])/iv)}}" +
+                        "if(rrate<0)rrate=0;if(trate<0)trate=0;trxr+=rrate;ttxr+=trate;printf \"iface|%s|%d|%d|%d|%d\\n\",x[1],rx,tx,rrate,trate}" +
+                        "printf \"total_rx_rate=%d\\ntotal_tx_rate=%d\\n\",trxr,ttxr}'";
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * 解析详情命令输出：
+     * - part|... 行 → partitions 列表
+     * - iface|... 行 → interfaces 列表
+     * - 其余 key=value → 普通字段（含 CPU 各核心 cpuN=value）
+     */
+    private Map<String, Object> parseDetailOutput(String output) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        List<Map<String, Object>> partitions = new ArrayList<>();
+        List<Map<String, Object>> interfaces = new ArrayList<>();
+        if (output == null) {
+            return data;
+        }
+        for (String line : output.split("\n")) {
+            line = line.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.startsWith("part|")) {
+                String[] f = line.split("\\|");
+                if (f.length >= 7) {
+                    Map<String, Object> p = new LinkedHashMap<>();
+                    p.put("fs", f[1]);
+                    p.put("size", parseLongSafe(f[2]));
+                    p.put("used", parseLongSafe(f[3]));
+                    p.put("avail", parseLongSafe(f[4]));
+                    p.put("use", parseIntSafe(f[5]));
+                    p.put("mount", f[6]);
+                    partitions.add(p);
+                }
+            } else if (line.startsWith("iface|")) {
+                String[] f = line.split("\\|");
+                if (f.length >= 6) {
+                    Map<String, Object> p = new LinkedHashMap<>();
+                    p.put("name", f[1]);
+                    p.put("rx", parseLongSafe(f[2]));
+                    p.put("tx", parseLongSafe(f[3]));
+                    p.put("rxRate", parseLongSafe(f[4]));
+                    p.put("txRate", parseLongSafe(f[5]));
+                    interfaces.add(p);
+                }
+            } else {
+                int eq = line.indexOf('=');
+                if (eq > 0) {
+                    String key = line.substring(0, eq).trim();
+                    String val = line.substring(eq + 1).trim();
+                    if (!key.startsWith("[")) {
+                        data.put(key, val);
+                    }
+                }
+            }
+        }
+        if (!partitions.isEmpty()) {
+            data.put("partitions", partitions);
+        }
+        if (!interfaces.isEmpty()) {
+            data.put("interfaces", interfaces);
+        }
+        return data;
+    }
+
+    /**
      * 计算父路径
      */
     private String getParentPath(String path) {
