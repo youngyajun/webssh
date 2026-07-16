@@ -3,7 +3,9 @@ package com.webssh.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * WebSSH 配置属性
@@ -23,16 +25,25 @@ public class WebSshProperties {
     private String contextPath = "/webssh";
 
     /**
-     * WebSSH 界面访问的账号（独立于Linux连接账号）
+     * WebSSH 界面访问的账号（单账号模式，向后兼容）
      * 无默认值，启动时强制要求配置，防止使用默认凭据部署到生产环境
+     * 与 accounts（多账号）共存：若用户名与 accounts 中已有账号冲突，则忽略单账号（以多账号为准）
      */
     private String username;
 
     /**
-     * WebSSH 界面访问的密码（独立于Linux连接账号）
+     * WebSSH 界面访问的密码（单账号模式，向后兼容）
      * 无默认值，启动时强制要求配置，建议使用强密码
+     * 与 accounts（多账号）共存：若用户名与 accounts 中已有账号冲突，则忽略单账号（以多账号为准）
      */
     private String password;
+
+    /**
+     * WebSSH 管理界面多账号列表（多账号模式）
+     * 与 username/password（单账号）共存，两者将合并为最终账号列表；
+     * 用户名冲突时以多账号为准（单账号被跳过）
+     */
+    private List<Account> accounts = new ArrayList<>();
 
     /**
      * SSH 连接超时时间（毫秒）
@@ -109,6 +120,141 @@ public class WebSshProperties {
         this.password = password;
     }
 
+    public List<Account> getAccounts() {
+        return accounts;
+    }
+
+    public void setAccounts(List<Account> accounts) {
+        this.accounts = accounts;
+    }
+
+    /**
+     * 获取生效的管理账号列表（统一入口，供启动校验与登录认证使用）
+     * 单账号与多账号共存，按以下规则合并：
+     *   1. 先加入 accounts（多账号）中所有用户名非空的账号
+     *   2. 再加入 username/password（单账号）：若其用户名与 accounts 中任一账号冲突，则跳过（以多账号为准）
+     *   3. 两者均未配置时返回空列表（调用方仅告警，不阻止启动）
+     */
+    public List<Account> getEffectiveAccounts() {
+        List<Account> result = new ArrayList<>();
+        Set<String> seenUsernames = new HashSet<>();
+
+        // 1. 先收录多账号（冲突时以此为准）
+        if (accounts != null) {
+            for (Account account : accounts) {
+                if (account == null || account.getUsername() == null || account.getUsername().isEmpty()) {
+                    continue;
+                }
+                if (seenUsernames.add(account.getUsername())) {
+                    result.add(account);
+                }
+            }
+        }
+
+        // 2. 再尝试追加单账号：用户名与多账号冲突时跳过（以多账号为准）
+        if (username != null && !username.isEmpty() && password != null && !password.isEmpty()) {
+            if (seenUsernames.add(username)) {
+                Account single = new Account();
+                single.setUsername(username);
+                single.setPassword(password);
+                result.add(single);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * 获取通过校验的有效管理账号列表（供登录认证使用）
+     * 过滤规则：
+     *   1. username 非空
+     *   2. password 符合强度规则（长度 8~19 位，含大写字母、小写字母、数字）
+     *   3. 同名账号仅保留首个（后续视为无效跳过）
+     * 不符合规则的账号被静默跳过，不影响启动
+     */
+    public List<Account> getValidAccounts() {
+        List<Account> valid = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Account account : getEffectiveAccounts()) {
+            if (!isAccountValid(account)) {
+                continue;
+            }
+            if (!seen.add(account.getUsername())) {
+                continue;
+            }
+            valid.add(account);
+        }
+        return valid;
+    }
+
+    /**
+     * 账号是否有效（用户名非空且密码符合强度规则）
+     */
+    public static boolean isAccountValid(Account account) {
+        return accountInvalidReason(account) == null;
+    }
+
+    /**
+     * 密码是否符合强度规则
+     * 规则：长度 8~19 位（>=8 且 <20），必须同时包含大写字母、小写字母和数字
+     */
+    public static boolean isPasswordStrong(String password) {
+        return passwordInvalidReason(password) == null;
+    }
+
+    /**
+     * 返回账号无效的具体原因；账号有效则返回 null
+     * 供启动校验日志输出使用
+     */
+    public static String accountInvalidReason(Account account) {
+        if (account == null) {
+            return "账号为空";
+        }
+        if (account.getUsername() == null || account.getUsername().isEmpty()) {
+            return "用户名为空";
+        }
+        return passwordInvalidReason(account.getPassword());
+    }
+
+    /**
+     * 返回密码不符合强度规则的具体原因；符合则返回 null
+     * 规则：长度 8~19 位（>=8 且 <20），必须同时包含大写字母、小写字母和数字
+     */
+    public static String passwordInvalidReason(String password) {
+        if (password == null || password.isEmpty()) {
+            return "密码为空";
+        }
+        if (password.length() < 8) {
+            return "密码长度不足8位";
+        }
+        if (password.length() >= 20) {
+            return "密码长度需小于20位";
+        }
+        boolean hasUpper = false;
+        boolean hasLower = false;
+        boolean hasDigit = false;
+        for (int i = 0; i < password.length(); i++) {
+            char c = password.charAt(i);
+            if (Character.isUpperCase(c)) {
+                hasUpper = true;
+            } else if (Character.isLowerCase(c)) {
+                hasLower = true;
+            } else if (Character.isDigit(c)) {
+                hasDigit = true;
+            }
+        }
+        if (!hasUpper) {
+            return "密码缺少大写字母";
+        }
+        if (!hasLower) {
+            return "密码缺少小写字母";
+        }
+        if (!hasDigit) {
+            return "密码缺少数字";
+        }
+        return null;
+    }
+
     public int getTimeout() {
         return timeout;
     }
@@ -171,6 +317,42 @@ public class WebSshProperties {
 
     public void setLoginSecurity(LoginSecurity loginSecurity) {
         this.loginSecurity = loginSecurity;
+    }
+
+    /**
+     * WebSSH 管理界面账号（独立于 Linux 连接账号）
+     */
+    public static class Account {
+        /**
+         * 登录用户名
+         */
+        private String username;
+
+        /**
+         * 登录密码（建议使用强密码）
+         */
+        private String password;
+
+        public String getUsername() {
+            return username;
+        }
+
+        public void setUsername(String username) {
+            this.username = username;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
+        }
+
+        @Override
+        public String toString() {
+            return "Account{username='" + username + "'}";
+        }
     }
 
     /**

@@ -107,7 +107,7 @@ public class WebSshAuthController {
             return result;
         }
 
-        if (username.equals(properties.getUsername()) && password.equals(properties.getPassword())) {
+        if (authenticate(username, password)) {
             // 登录成功，清除失败记录
             loginAttemptService.recordSuccess(clientIp);
             session.setAttribute("webssh_logged_in", true);
@@ -130,6 +130,42 @@ public class WebSshAuthController {
             result.put("remainingAttempts", failStatus.getRemainingAttempts());
         }
         return result;
+    }
+
+    /**
+     * 校验账号密码是否匹配任一已配置的管理账号
+     * 仅与通过密码强度校验的有效账号比对（getValidAccounts），
+     * 弱密码或字段缺失的账号在启动时已被标记为无效，无法用于登录。
+     * 使用常量时间比较，降低时序攻击风险。
+     */
+    private boolean authenticate(String username, String password) {
+        if (username == null || password == null) {
+            return false;
+        }
+        for (WebSshProperties.Account account : properties.getValidAccounts()) {
+            if (username.equals(account.getUsername())
+                    && constantTimeEquals(password, account.getPassword())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 常量时间字符串比较，避免基于耗时的密码猜测
+     */
+    private boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        if (a.length() != b.length()) {
+            return false;
+        }
+        int diff = 0;
+        for (int i = 0; i < a.length(); i++) {
+            diff |= a.charAt(i) ^ b.charAt(i);
+        }
+        return diff == 0;
     }
 
     /**

@@ -17,6 +17,10 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
 /**
  * WebSSH 自动配置类
  * 引入该 Starter 后自动装配所有组件
@@ -109,22 +113,51 @@ public class WebSshAutoConfiguration {
 
     /**
      * 启动时校验管理凭据已配置
-     * 移除默认凭据后强制用户显式配置 webssh.username 和 webssh.password，
-     * 防止使用默认 admin/admin123 部署到生产环境
+     * 支持两种配置方式（可共存，用户名冲突时以多账号为准）：
+     *   1. 多账号模式：webssh.accounts 列表，每项含 username/password
+     *   2. 单账号模式（向后兼容）：webssh.username + webssh.password
+     * 两者均未配置或全部无效时仅告警，不阻止启动（登录将全部失败）
+     *
+     * 密码强度规则：长度 8~19 位（>=8 且 <20），必须同时包含大写字母、小写字母和数字
+     * 不符合规则的账号视为无效，仅记录告警日志并跳过，不影响启动；
+     * 登录认证只使用通过校验的有效账号（见 WebSshProperties.getValidAccounts()）
      */
     @PostConstruct
     public void validateCredentials() {
-        if (properties.getUsername() == null || properties.getUsername().isEmpty()) {
-            throw new IllegalStateException(
-                    "WebSSH 启动失败：未配置管理账号，请在 application.yml 中设置 webssh.username");
+        List<WebSshProperties.Account> effective = properties.getEffectiveAccounts();
+
+        if (effective.isEmpty()) {
+            // 未配置任何账号：不阻止启动，但明确告警当前无人可登录
+            log.error("WebSSH: 未配置任何管理账号，当前无可用账号，登录将全部失败！");
+            log.error("WebSSH: 请在 application.yml 中设置 webssh.accounts（多账号），或 webssh.username/webssh.password（单账号）");
+            return;
         }
-        if (properties.getPassword() == null || properties.getPassword().isEmpty()) {
-            throw new IllegalStateException(
-                    "WebSSH 启动失败：未配置管理密码，请在 application.yml 中设置 webssh.password"
-                            + "（建议使用强密码）");
+
+        // 逐个校验账号：无效账号仅告警并跳过，不影响启动
+        Set<String> seen = new HashSet<>();
+        int validCount = 0;
+        for (WebSshProperties.Account account : effective) {
+            String name = (account != null && account.getUsername() != null && !account.getUsername().isEmpty()) ? account.getUsername() : "(未命名)";
+
+            // 1. 字段与密码强度校验
+            String reason = WebSshProperties.accountInvalidReason(account);
+            if (reason != null) {
+                log.warn("WebSSH: 账号 [{}] 配置无效已跳过（{}），该账号无法用于登录", name, reason);
+                continue;
+            }
+            // 2. 重复用户名校验（仅保留首个）
+            if (!seen.add(account.getUsername())) {
+                log.warn("WebSSH: 账号 [{}] 用户名重复已跳过（仅保留首个同名账号）", name);
+                continue;
+            }
+            validCount++;
         }
-        if ("admin123".equals(properties.getPassword()) || "admin".equals(properties.getUsername())) {
-            log.warn("WebSSH: 检测到使用默认凭据 admin/admin123，存在严重安全风险，请立即修改！");
+        if (validCount == 0) {
+            // 所有账号均无效：不阻止启动，但明确告警当前无人可登录
+            log.error("WebSSH: 所有管理账号均无效（密码不符合强度规则或字段缺失），当前无可用账号，登录将全部失败！");
+            log.error("WebSSH: 密码强度规则——长度 8~19 位，必须同时包含大写字母、小写字母和数字");
+        } else {
+            log.info("WebSSH: 管理账号加载完成，有效账号 {} 个，无效账号 {} 个", validCount, effective.size() - validCount);
         }
     }
 }
