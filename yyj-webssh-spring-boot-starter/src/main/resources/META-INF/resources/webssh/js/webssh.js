@@ -63,7 +63,7 @@ const TERMINAL_THEMES = {
     'github-dark': {
         name: 'Dark',
         background: '#0d1117', foreground: '#c9d1d9', cursor: '#00ff00',
-        selection: 'rgba(88, 166, 255, 0.3)',
+        selectionBackground: 'rgba(88, 166, 255, 0.3)',
         black: '#0d1117', red: '#ff7b72', green: '#3fb950',
         yellow: '#d29922', blue: '#58a6ff', magenta: '#bc8cff',
         cyan: '#39c5cf', white: '#c9d1d9',
@@ -74,7 +74,7 @@ const TERMINAL_THEMES = {
     'github-light': {
         name: 'Light',
         background: '#ffffff', foreground: '#24292f', cursor: '#00ff00',
-        selection: 'rgba(4, 83, 178, 0.15)',
+        selectionBackground: 'rgba(4, 83, 178, 0.3)',
         black: '#24292f', red: '#cf222e', green: '#116329',
         yellow: '#4d2d00', blue: '#0969da', magenta: '#8250df',
         cyan: '#1b7c83', white: '#6e7781',
