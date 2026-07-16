@@ -951,9 +951,13 @@ body.resizing {
     color: var(--text);
 }
 .tab-item.active {
-    background: var(--bg-tab-active);
-    color: var(--text);
-    border-bottom-color: var(--accent);
+    background: var(--accent-hover);
+    color: #fff;
+    border-bottom-color: transparent;
+}
+.tab-item.active:hover {
+    background: var(--accent-hover);
+    color: #fff;
 }
 .tab-item .tab-label {
     max-width: 140px;
@@ -993,6 +997,7 @@ body.resizing {
 }
 .tab-item.active .tab-close {
     visibility: visible;
+    color: rgba(255, 255, 255, 0.85);
 }
 /* 标签拖拽排序样式 */
 .tab-item.dragging {
@@ -1136,6 +1141,168 @@ body.resizing {
 }
 .terminal-container-inner .tab-terminal.active {
     display: block;
+}
+/* ======================== 分屏布局（拖拽标签到终端区触发，支持嵌套两次） ======================== */
+/* 嵌套 wrapper 默认 relative 作为父 flex 项自动填充；根 wrapper 绝对填充终端容器 */
+
+.split-wrapper {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+/* 根 wrapper：绝对填充终端容器（仅 terminalContainer 的直接子元素） */
+#terminalContainer > .split-wrapper {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 2;
+}
+/* 分屏视图隐藏：切到非分屏标签时通过此 class 隐藏 splitWrapper，保留 splitState 与 DOM 不销毁 */
+#terminalContainer > .split-wrapper.hidden {
+    display: none;
+}
+.split-wrapper.vertical {
+    flex-direction: column;
+}
+.split-pane {
+    position: relative;
+    overflow: hidden;
+    min-width: 0;
+    min-height: 0;
+}
+/* 聚焦面板的强调：微弱内阴影（内描边 + 内发光），不拦截事件。
+   用 inset box-shadow 代替整圈实心边框，视觉更柔和、不喧宾夺主。
+   color-mix 让强调色半透明，适配暗/亮主题。 */
+.split-pane.focused::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+        inset 0 0 14px -3px color-mix(in srgb, var(--accent) 28%, transparent);
+    pointer-events: none;
+    z-index: 3;
+}
+/* 分隔条：水平分屏为竖条，垂直分屏为横条 */
+.split-resizer {
+    flex: 0 0 6px;
+    background: var(--border);
+    cursor: col-resize;
+    position: relative;
+    z-index: 4;
+    transition: background 0.15s;
+}
+.split-wrapper.vertical .split-resizer {
+    cursor: row-resize;
+}
+.split-resizer:hover {
+    background: var(--accent);
+}
+/* 面板关闭按钮：点击后退出分屏并保留另一侧 */
+.split-pane-close {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    line-height: 18px;
+    text-align: center;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    font-size: 16px;
+    z-index: 6;
+    user-select: none;
+}
+.split-pane-close:hover {
+    background: #da3633;
+    color: #fff;
+}
+/* 拖放罗盘遮罩：pointer-events:none 不拦截 DnD 事件；显示时给终端区一点暗化聚焦感。
+   overlay 尺寸由 JS 内联设置（覆盖目标面板区域），故此处仅设默认 top/left */
+.split-drop-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    display: none;
+    z-index: 10;
+    pointer-events: none;
+    background: rgba(0, 0, 0, 0.2);
+}
+.split-drop-overlay.show {
+    display: block;
+}
+/* 分屏位置预览阴影：高亮被拖标签落点所在的半区，直观预示新面板位置（同 Xshell） */
+.split-preview {
+    position: absolute;
+    display: none;
+    background: rgba(88, 166, 255, 0.18);
+    border: 2px dashed var(--accent);
+    box-sizing: border-box;
+    box-shadow: inset 0 0 40px rgba(88, 166, 255, 0.35);
+    transition: background 0.12s;
+    pointer-events: none;
+}
+.split-preview.show {
+    display: block;
+}
+.split-preview.pos-left   { top: 0; left: 0; width: 50%; height: 100%; }
+.split-preview.pos-right  { top: 0; right: 0; width: 50%; height: 100%; }
+.split-preview.pos-top    { top: 0; left: 0; width: 100%; height: 50%; }
+.split-preview.pos-bottom { bottom: 0; left: 0; width: 100%; height: 50%; }
+/* Xshell 风格四向罗盘：居中 3x3 网格，四向单元格始终可见，当前方向高亮 */
+.split-compass {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    display: grid;
+    grid-template-columns: repeat(3, 70px);
+    grid-template-rows: repeat(3, 70px);
+    gap: 6px;
+}
+.compass-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    border-radius: 10px;
+    background: rgba(22, 27, 34, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #c9d1d9;
+    font-size: 12px;
+    box-sizing: border-box;
+    transition: background 0.12s, border-color 0.12s, transform 0.12s, color 0.12s;
+}
+.compass-cell .arrow {
+    font-size: 22px;
+    line-height: 1;
+}
+.compass-cell.hover {
+    background: var(--accent-hover);
+    border-color: var(--accent);
+    color: #fff;
+    transform: scale(1.08);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.25);
+}
+/* 中心占位格：弱化显示 */
+.compass-cell.cell-center {
+    background: rgba(22, 27, 34, 0.5);
+    border-style: dashed;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+/* 网格定位：上(行1列2) 左(行2列1) 中(行2列2) 右(行2列3) 下(行3列2) */
+.cell-top    { grid-column: 2; grid-row: 1; }
+.cell-left   { grid-column: 1; grid-row: 2; }
+.cell-center { grid-column: 2; grid-row: 2; }
+.cell-right  { grid-column: 3; grid-row: 2; }
+.cell-bottom { grid-column: 2; grid-row: 3; }
+/* 分屏中非聚焦标签的次级高亮：用淡蓝底色提示该会话仍在另一面板可见
+   （不再在连接状态图标上画圆环，避免与选中态混淆） */
+.tab-item.in-split {
+    background: var(--bg-active);
+    border-bottom-color: var(--accent);
 }
 .terminal-empty-state {
     position: absolute;
