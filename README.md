@@ -202,7 +202,7 @@ webssh:
 
 **步骤三：引入application-webssh.yml**
 
-主配置application.yml文件引入配置：
+主配置`application.yml`文件引入配置：
 
 ```yml
 # Spring 相关配置
@@ -214,7 +214,7 @@ spring:
 
 **步骤四：启动应用**
 
-正常启动 Spring Boot 应用即可，Starter 通过 `AutoConfiguration.imports` 自动装配，无需额外注解或配置类。
+正常启动`Spring Boot`应用即可，Starter 通过 `AutoConfiguration.imports` 自动装配，无需额外注解或配置类。
 
 访问 `http://your-host:port/webssh/login.html`，使用 `webssh.username` / `webssh.password` 登录后选择主机连接。
 
