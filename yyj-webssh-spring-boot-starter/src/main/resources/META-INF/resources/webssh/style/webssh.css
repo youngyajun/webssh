@@ -1212,3 +1212,29 @@ body.resizing {
     padding: 40px 20px;
     color: var(--text-muted);
 }
+
+/* ======================== 字体大小提示 ======================== */
+/* Ctrl+滚轮调整终端字体时，在终端区域右上角短暂显示当前字号 */
+
+.font-size-hint {
+    position: fixed;
+    top: 50%;
+    right: 32px;
+    transform: translateY(-50%) scale(0.9);
+    z-index: 9999;
+    padding: 8px 16px;
+    background: rgba(31, 111, 235, 0.92);
+    color: #fff;
+    font-size: 15px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-weight: 600;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.font-size-hint.show {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+}
