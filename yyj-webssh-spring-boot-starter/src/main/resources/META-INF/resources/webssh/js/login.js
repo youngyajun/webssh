@@ -160,6 +160,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         const data = await response.json();
         if (data.code === 200) {
             clearLockCountdown();
+            // 登录成功：清除上次保存的会话标签状态，确保登录后是干净状态（不自动恢复旧标签）
+            // 浏览器刷新恢复不受影响（刷新时会话仍有效，不经过登录页）
+            try { localStorage.removeItem('webssh_tabs_state'); } catch (e) {}
             window.location.href = contextPath + '/index.html';
         } else if (data.code === 429) {
             // 已被锁定，启动倒计时

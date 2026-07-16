@@ -1881,16 +1881,11 @@ function loadHosts() {
                 ).join('');
             // 优先尝试从本地存储恢复上次刷新前的会话标签
             if (!restoreTabs()) {
-                // 无保存的会话，则按默认行为打开第一个主机（或弹凭据框）
-                if (hostsInfo.length > 0 && tabs.length === 0) {
-                    const host = hostsInfo[0];
-                    currentHost = host.name;
+                // 无保存的会话：不自动连接第一个主机，弹出凭据对话框让用户选择主机连接
+                if (tabs.length === 0) {
+                    currentHost = '';
                     selector.selectedIndex = 0;
-                    if (host.needCredentials) {
-                        showCredentialDialog();
-                    } else {
-                        createTab(host.name, '', '');
-                    }
+                    showCredentialDialog();
                 }
             }
         });
@@ -2067,9 +2062,11 @@ function showCredentialDialog() {
     // 填充主机下拉建议列表（自定义下拉，用户可从中选择或自由输入 IP）
     const hostInput = document.getElementById('credentialHost');
     hostInput.value = currentHost;
+    syncHostClearVisibility();
     // 输入框失焦且值变化时：更新 currentHost、清空凭据、刷新表单可见性
     hostInput.onchange = () => {
         currentHost = hostInput.value.trim();
+        syncHostClearVisibility();
         document.getElementById('credentialUsername').value = '';
         document.getElementById('credentialPassword').value = '';
         document.getElementById('credentialError').style.display = 'none';
@@ -2098,6 +2095,15 @@ function showCredentialDialog() {
 
 // ======================== 主机组合框（自定义下拉，替代原生 datalist） ========================
 // 支持自由输入 IP + 下拉选择已配置主机，提供过滤、键盘导航（↑↓/Enter/Esc）
+
+// 根据主机输入框是否有内容，切换清空按钮的显隐（通过 has-value 类控制）
+function syncHostClearVisibility() {
+    const hostInput = document.getElementById('credentialHost');
+    const combobox = hostInput.closest('.host-combobox');
+    if (combobox) {
+        combobox.classList.toggle('has-value', hostInput.value.length > 0);
+    }
+}
 
 // 根据输入文本过滤并渲染下拉项
 function populateHostDropdown(query) {
@@ -2472,6 +2478,7 @@ function bindEvents() {
     hostInput.addEventListener('input', () => {
         populateHostDropdown(hostInput.value.trim());
         showHostDropdown();
+        syncHostClearVisibility();
     });
     // 聚焦时展开下拉（按当前值过滤）
     hostInput.addEventListener('focus', () => {
@@ -2518,6 +2525,19 @@ function bindEvents() {
             e.preventDefault();
             selectHostItem(item.dataset.host);
         }
+    });
+    // 清空按钮：清空主机输入并展开下拉展示全部主机
+    // 用 mousedown + preventDefault 阻止 input 失焦，保持焦点在主机输入框
+    document.getElementById('hostClearBtn').addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        hostInput.value = '';
+        syncHostClearVisibility();
+        // 触发 onchange 同步 currentHost、清空凭据、刷新表单可见性
+        hostInput.dispatchEvent(new Event('change'));
+        // 展开下拉展示所有主机（onchange 可能聚焦到用户名，此处重新拉回主机输入框）
+        populateHostDropdown('');
+        showHostDropdown();
+        hostInput.focus();
     });
     // 点击下拉外部时关闭
     document.addEventListener('click', (e) => {

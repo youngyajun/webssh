@@ -476,7 +476,7 @@ public class SshService {
     /**
      * 查找主机配置
      * 先在配置文件中按名称查找；若未找到，则将输入作为自定义主机 IP/域名处理，
-     * 支持 host:port 格式（如 192.168.1.1:2222），端口默认 22。
+     * 支持 host:port 格式（如 192.168.1.166:2222），端口默认 22。
      * 自定义主机不预配凭据，由界面输入。
      */
     private WebSshProperties.Host findHost(String hostName) {
