@@ -1093,7 +1093,7 @@ public class WebSshFileController {
                 "C2=$(awk '/^cpu /{s=0;for(i=2;i<=8;i++)s+=$i;print s;exit}' /proc/stat);" +
                 "I2=$(awk '/^cpu /{print $5;exit}' /proc/stat);" +
                 "CPU=$(awk -v c1=$C1 -v i1=$I1 -v c2=$C2 -v i2=$I2 'BEGIN{dt=c2-c1;di=i2-i1;if(dt>0)printf \"%.1f\",(dt-di)/dt*100;else print 0}');" +
-                "MEM=$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{if(t>0)printf \"%.1f\",(t-a)/t*100;else print 0}' /proc/meminfo);" +
+                "MEM=$(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{if(t>0)printf \"%.1f\",(t-a)/t*100;else print 0}' /proc/meminfo);" +
                 "DISK=$(df -P / 2>/dev/null | awk 'NR==2{gsub(/%/,\"\");print $5}');" +
                 "LOAD=$(awk '{print $1}' /proc/loadavg);" +
                 "NET=$(awk '/:/ && $1!=\"lo:\" {r+=$2;t+=$10}END{print r+0,t+0}' /proc/net/dev);" +
@@ -1195,7 +1195,7 @@ public class WebSshFileController {
                         "printf 'model=%s\\ncores=%s\\nfreq=%s\\nuptime=%s\\nuptime_fmt=%s\\nusage=%s\\n' \"$MODEL\" \"$CORES\" \"$FREQ\" \"$UP\" \"$UPF\" \"$TOTAL\";" +
                         "awk -v a=\"$C1\" -v b=\"$C2\" 'BEGIN{na=split(a,la,\"\\n\");split(b,lb,\"\\n\");for(i=1;i<=na;i++){if(la[i]==\"\")continue;split(la[i],x,\" \");split(lb[i],y,\" \");dt=y[2]-x[2];di=y[3]-x[3];if(dt>0)printf \"%s=%.1f\\n\",x[1],(dt-di)/dt*100;else printf \"%s=0\\n\",x[1]}}'";
             case "mem":
-                return "awk '/MemTotal/{t=$2}/MemFree/{f=$2}/MemAvailable/{a=$2}/Buffers/{b=$2}/Cached/{c=$2}/SwapTotal/{st=$2}/SwapFree/{sf=$2}END{printf \"mem_total=%d\\nmem_free=%d\\nmem_available=%d\\nmem_buffers=%d\\nmem_cached=%d\\nswap_total=%d\\nswap_free=%d\\n\",t,f,a,b,c,st,sf}' /proc/meminfo";
+                return "awk '/^MemTotal:/{t=$2}/^MemFree:/{f=$2}/^MemAvailable:/{a=$2}/^Buffers:/{b=$2}/^Cached:/{c=$2}/^SwapTotal:/{st=$2}/^SwapFree:/{sf=$2}END{printf \"mem_total=%d\\nmem_free=%d\\nmem_available=%d\\nmem_buffers=%d\\nmem_cached=%d\\nswap_total=%d\\nswap_free=%d\\n\",t,f,a,b,c,st,sf}' /proc/meminfo";
             case "disk":
                 return "df -P 2>/dev/null | awk 'NR>1{gsub(/%/,\"\",$5);printf \"part|%s|%s|%s|%s|%s|%s\\n\",$1,$2,$3,$4,$5,$6}'";
             case "load":

@@ -1014,14 +1014,15 @@ function renderCpuDetail(d) {
 }
 
 function renderMemDetail(d) {
-    const total = _parseLong(d.mem_total);
-    const avail = _parseLong(d.mem_available);
+    // /proc/meminfo 返回值的单位为 kB，统一乘以 1024 转换为字节后再格式化
+    const total = _parseLong(d.mem_total) * 1024;
+    const avail = _parseLong(d.mem_available) * 1024;
     const used = total - avail;
-    const free = _parseLong(d.mem_free);
-    const buffers = _parseLong(d.mem_buffers);
-    const cached = _parseLong(d.mem_cached);
-    const swapTotal = _parseLong(d.swap_total);
-    const swapFree = _parseLong(d.swap_free);
+    const free = _parseLong(d.mem_free) * 1024;
+    const buffers = _parseLong(d.mem_buffers) * 1024;
+    const cached = _parseLong(d.mem_cached) * 1024;
+    const swapTotal = _parseLong(d.swap_total) * 1024;
+    const swapFree = _parseLong(d.swap_free) * 1024;
     const swapUsed = swapTotal - swapFree;
     let html = _statCards([
         ['总内存', formatBytes(total)],
