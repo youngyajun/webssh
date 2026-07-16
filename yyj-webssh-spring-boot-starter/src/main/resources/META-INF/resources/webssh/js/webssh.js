@@ -121,6 +121,43 @@ function applyThemeToAllTabs(themeName) {
 // 获取活跃标签页
 function getActiveTab() { return tabs.find(t => t.id === activeTabId); }
 
+// 实时输出判定窗口：已连接标签页在此时间内收到过终端输出，视为"正在实时输出"
+// （覆盖 tail -f、top、日志跟随等持续/周期性输出场景）
+const STREAMING_OUTPUT_THRESHOLD_MS = 5000;
+
+// 检测是否存在正在实时输出内容的标签页（用于刷新/关闭前提示）
+function hasActiveStreamingTab() {
+    const now = Date.now();
+    return tabs.some(t => t.connected && t.socket && t.lastOutputTime
+        && (now - t.lastOutputTime < STREAMING_OUTPUT_THRESHOLD_MS));
+}
+
+// 通用确认对话框（基于 Promise），风格与页面自定义弹窗保持一致
+function showConfirmDialog(message, { title = '确认', okText = '确定', okClass = 'btn-primary' } = {}) {
+    return new Promise(resolve => {
+        const modal = document.getElementById('confirmModal');
+        document.getElementById('confirmTitle').textContent = title;
+        document.getElementById('confirmMessage').textContent = message;
+        const okBtn = document.getElementById('okConfirm');
+        okBtn.textContent = okText;
+        okBtn.className = 'btn ' + okClass;
+        modal.classList.add('show');
+        const cleanup = (result) => {
+            modal.classList.remove('show');
+            okBtn.onclick = null;
+            document.getElementById('cancelConfirm').onclick = null;
+            document.getElementById('closeConfirmModal').onclick = null;
+            modal.onclick = null;
+            resolve(result);
+        };
+        okBtn.onclick = () => cleanup(true);
+        document.getElementById('cancelConfirm').onclick = () => cleanup(false);
+        document.getElementById('closeConfirmModal').onclick = () => cleanup(false);
+        // 点击背景遮罩关闭 = 取消
+        modal.onclick = (e) => { if (e.target === e.currentTarget) cleanup(false); };
+    });
+}
+
 // 同步全局变量到指定标签页（从标签页恢复到全局）
 function syncGlobalsToTab(tab) {
     terminal = tab.terminal;
@@ -165,8 +202,15 @@ document.addEventListener('DOMContentLoaded', () => {
     bindTabEvents();
     updateEmptyState();
 
-    // 浏览器刷新/关闭前兜底保存会话标签状态，确保恢复时拿到最新数据
-    window.addEventListener('beforeunload', saveTabsState);
+    // 浏览器刷新/关闭前：兜底保存会话标签状态，确保恢复时拿到最新数据；
+    // 若有标签页正在实时输出内容（tail -f、top、日志跟随等），弹出浏览器原生确认提示，避免误刷中断
+    window.addEventListener('beforeunload', (event) => {
+        saveTabsState();
+        if (hasActiveStreamingTab()) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    });
 });
 
 // 为标签页创建终端 DOM 和 xterm.js 实例
@@ -270,7 +314,9 @@ function createTab(host, username, password, rememberCredentials, pendingCredent
         // 刷新恢复后是否需要用户重新输入凭据（手动凭证会话且未记住密码时）
         pendingCredentials: !!pendingCredentials,
         // 命令日志（记录用户在终端输入的每条命令）
-        commandLog: []
+        commandLog: [],
+        // 最近一次收到终端输出的时间戳（用于检测 tail -f、top、日志跟随等实时输出）
+        lastOutputTime: 0
     };
 
     tabs.push(tab);
@@ -1319,9 +1365,18 @@ function bindEvents() {
         }
     });
 
-    document.getElementById('refreshBtn').addEventListener('click', () => {
+    document.getElementById('refreshBtn').addEventListener('click', async () => {
         const at = getActiveTab();
         if (!at) return;
+        // 当前活跃标签页正在实时输出时，提示确认避免中断（tail -f、top、日志跟随等）
+        if (at.connected && at.socket && at.lastOutputTime
+            && (Date.now() - at.lastOutputTime < STREAMING_OUTPUT_THRESHOLD_MS)) {
+            const ok = await showConfirmDialog(
+                '当前会话正在实时输出内容，重新连接将中断输出。确定要重新连接吗？',
+                { title: '确认刷新', okText: '重新连接' }
+            );
+            if (!ok) return;
+        }
         const hostInfo = hostsInfo.find(h => h.name === at.host);
         // 自定义主机（不在配置中）始终需要凭据
         const needCredentials = hostInfo ? hostInfo.needCredentials : true;
@@ -1756,6 +1811,7 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
         }
     };
     tab.socket.onmessage = (event) => {
+        tab.lastOutputTime = Date.now();
         tab.terminal.write(event.data);
     };
     tab.socket.onclose = (event) => {

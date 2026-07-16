@@ -225,6 +225,23 @@
         </div>
     </div>
 
+    <!-- 通用确认对话框 -->
+    <div class="modal" id="confirmModal">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <span class="modal-title" id="confirmTitle">确认</span>
+                <button class="modal-close" id="closeConfirmModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmMessage" style="font-size: 15px; margin: 0; color: var(--text); line-height: 1.6;"></p>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;">
+                    <button class="btn" id="cancelConfirm">取消</button>
+                    <button class="btn btn-primary" id="okConfirm">确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 文件属性对话框 -->
     <div class="modal" id="propertiesModal">
         <div class="modal-content" style="max-width: 520px;">
