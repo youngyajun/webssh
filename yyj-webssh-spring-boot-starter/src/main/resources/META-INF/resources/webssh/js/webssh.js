@@ -264,7 +264,12 @@ function createTerminalForTab(tabId) {
     // 终端输入转发：始终发送到当前活跃标签页的 socket
     term.onData(data => {
         const at = getActiveTab();
-        if (at && at.socket && at.socket.readyState === WebSocket.OPEN) {
+        // ZMODEM 传输期间禁止向 socket 发送原始终端输入：
+        // ZMODEM 协议字节（ZRPOS/ZACK/ZFIN 等）由 sentry 的 sender 回调独立发送，
+        // 此处原始键盘输入会混入协议流，被 sz/rz 误解析为 ZSKIP/ZABORT 等帧，
+        // 导致 sz 打印 "skipped" 并使会话卡死。
+        // 分屏模式下弹窗不自动抢焦点，终端仍持有键盘焦点，用户误触键盘更易触发此问题。
+        if (at && at.socket && at.socket.readyState === WebSocket.OPEN && !at.zmodemSession) {
             at.socket.send(data);
         }
         // 只追踪活跃标签页的输入（避免后台标签页数据干扰 cd 检测）
@@ -491,6 +496,40 @@ function closeTab(tabId) {
     if (tab.reconnectTimer) {
         clearTimeout(tab.reconnectTimer);
         tab.reconnectTimer = null;
+    }
+
+    // 同步清理 ZMODEM 状态：socket.close() 触发的 onclose 是异步的，
+    // 在 onclose 触发前 sentry 可能向已 dispose 的 terminal 写入（抛异常），
+    // 且 activeZmodemSession 残留会阻止其他标签页启动 ZMODEM（用户体感"卡住"）。
+    // 必须在 close socket 和 dispose terminal 之前同步完成清理。
+    if (tab.zmodemSession) {
+        try {
+            if (typeof tab.zmodemSession.abort === 'function') {
+                tab.zmodemSession.abort();
+            }
+        } catch (e) { /* ignore */ }
+        if (activeZmodemSession === tab.zmodemSession) {
+            activeZmodemSession = null;
+            activeZmodemTab = null;
+        }
+        tab.zmodemSession = null;
+        closeZmodemModal(false);
+    }
+    // 清理 sz 保存方式选择阶段的悬挂 Promise（onclose 可能来不及触发）
+    if (pendingReceiveResolver) {
+        pendingReceiveResolver({ type: 'cancel' });
+        pendingReceiveResolver = null;
+    }
+    // 清理 rz 文件对话框 focus 监听器（防止泄漏到下次 ZMODEM 会话）
+    if (tab.fileDialogFocusListener) {
+        window.removeEventListener('focus', tab.fileDialogFocusListener);
+        tab.fileDialogFocusListener = null;
+    }
+    // 清理残帧过滤定时器
+    if (tab.zmodemJustEndedTimer) {
+        clearTimeout(tab.zmodemJustEndedTimer);
+        tab.zmodemJustEndedTimer = null;
+        tab.zmodemJustEnded = false;
     }
 
     // 先关闭 WebSocket
@@ -2720,6 +2759,742 @@ function bindEvents() {
     // 终端输入处理已在 createTerminalForTab 中绑定
 }
 
+// ===== ZMODEM (rz/sz) 文件传输支持 =====
+// 全局状态：当前活跃的 ZMODEM 会话（同时只允许一个传输），用于取消按钮回调
+let activeZmodemSession = null;
+let activeZmodemTab = null;
+
+/**
+ * 过滤 ZMODEM 残帧字节
+ * rz/sz 会话结束后，对端可能残留发送 ZMODEM 协议字节（如 ZACK/ZFIN 等帧头），
+ * 典型表现为 hex 帧头：*B0100000023be50 或二进制帧头 **\x18B...
+ * 用 Latin1 编码做字节安全转换，正则匹配并剥离，不影响正常 UTF-8 终端输出。
+ * 仅在 session_end 后 2 秒内调用（tab.zmodemJustEnded 为 true 时）。
+ */
+function filterZmodemBytes(bytes) {
+    const len = bytes.length;
+    if (len === 0) return bytes;
+    // Latin1 安全转换（字节值 0-255 一一对应 char code，不破坏多字节序列）
+    let str = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < len; i += chunkSize) {
+        const end = Math.min(i + chunkSize, len);
+        str += String.fromCharCode.apply(null, bytes.subarray(i, end));
+    }
+    // 匹配 ZMODEM hex 帧头：*B + 4-16 hex chars + 可选 \r\n + 可选 XON(\x11)
+    // 也匹配二进制帧头起始 **\x18B
+    const filtered = str.replace(/(?:\*\*\x18B|\*B)[0-9a-fA-F]{4,16}(?:\r\n)?\x11?/g, '');
+    if (filtered.length === str.length) return bytes;  // 无匹配，返回原数据
+    const result = new Uint8Array(filtered.length);
+    for (let i = 0; i < filtered.length; i++) {
+        result[i] = filtered.charCodeAt(i);
+    }
+    return result;
+}
+
+/**
+ * 为标签页创建 zmodem sentry
+ * sentry 监听 SSH 输出流，自动识别 ZMODEM 协议帧：
+ * - 普通字节 → 通过 to_terminal 回调写入 xterm 显示
+ * - ZMODEM 协议帧 → 通过 on_detect 触发文件传输流程
+ * - 需要回送给 SSH 对端的协议字节 → 通过 sender 回调以 WebSocket 二进制帧发送
+ */
+function setupZmodemSentryForTab(tab) {
+    // 重置该 tab 的 zmodem 会话引用与残帧过滤状态
+    tab.zmodemSession = null;
+    tab.zmodemJustEnded = false;
+    if (tab.zmodemJustEndedTimer) {
+        clearTimeout(tab.zmodemJustEndedTimer);
+        tab.zmodemJustEndedTimer = null;
+    }
+    tab.zmodemSentry = new Zmodem.Sentry({
+        // 普通终端字节：直接写入 xterm（xterm 5.x 支持 Uint8Array 输入，可正确处理跨块的 UTF-8 多字节序列）
+        // session_end 后 2s 内过滤 ZMODEM 残帧字节（如 *B0100000023be50）
+        to_terminal(octets) {
+            const bytes = octets instanceof Uint8Array ? octets : new Uint8Array(octets);
+            if (tab.zmodemJustEnded) {
+                tab.terminal.write(filterZmodemBytes(bytes));
+            } else {
+                tab.terminal.write(bytes);
+            }
+        },
+        // ZMODEM 协议需要发往 SSH 对端（rz/sz 进程）的字节：通过 WebSocket 二进制帧发送
+        sender(octets) {
+            if (tab.socket && tab.socket.readyState === WebSocket.OPEN) {
+                const bytes = octets instanceof Uint8Array ? octets : new Uint8Array(octets);
+                tab.socket.send(bytes);
+            }
+        },
+        // 检测到 ZMODEM 会话起始：根据会话类型分发到上传/下载流程
+        on_detect(detection) {
+            handleZmodemDetect(tab, detection);
+        },
+        // ZMODEM 会话被撤销（如对端 Ctrl+C 取消）：保持当前 UI 状态，等待 session_end 清理
+        on_retract() {
+        }
+    });
+}
+
+/**
+ * 处理 ZMODEM 会话检测
+ * 根据会话类型（send/receive）分别处理：
+ * - receive: 对端要发文件给我们（用户在终端输入了 sz） → 接收并保存到本地
+ * - send: 对端准备接收文件（用户在终端输入了 rz） → 弹文件选择框上传
+ */
+function handleZmodemDetect(tab, detection) {
+    // 同时只允许一个 ZMODEM 会话，已有活跃会话时拒绝新会话
+    if (activeZmodemSession) {
+        try { detection.deny(); } catch (e) { /* ignore */ }
+        tab.terminal.write('\r\n\x1b[33m[WebSSH] 已有 ZMODEM 传输正在进行，已拒绝新会话\x1b[0m\r\n');
+        return;
+    }
+
+    let zsession;
+    try {
+        zsession = detection.confirm();
+    } catch (e) {
+        console.error('ZMODEM confirm failed:', e);
+        return;
+    }
+
+    activeZmodemSession = zsession;
+    activeZmodemTab = tab;
+    tab.zmodemSession = zsession;
+
+    // 会话结束时清理全局状态并关闭弹窗
+    zsession.on('session_end', () => {
+        const wasActive = (activeZmodemSession === zsession);
+        closeZmodemModal(true);
+        if (wasActive) {
+            activeZmodemSession = null;
+            activeZmodemTab = null;
+        }
+        if (tab.zmodemSession === zsession) {
+            tab.zmodemSession = null;
+        }
+        // 标记会话刚结束，2s 内 to_terminal 过滤残帧字节
+        // sz/rz 进程退出后可能残留发送 ZMODEM 协议帧头（如 *B0100000023be50），
+        // sentry 已回到普通模式会把这些字节写入终端显示为乱码
+        tab.zmodemJustEnded = true;
+        if (tab.zmodemJustEndedTimer) {
+            clearTimeout(tab.zmodemJustEndedTimer);
+        }
+        tab.zmodemJustEndedTimer = setTimeout(() => {
+            tab.zmodemJustEnded = false;
+            tab.zmodemJustEndedTimer = null;
+        }, 2000);
+    });
+
+    if (zsession.type === 'send') {
+        // 对端准备接收 → 用户输入了 rz，让用户选择本地文件上传
+        startZmodemSend(tab, zsession);
+    } else {
+        // 对端准备发送 → 用户输入了 sz，准备接收并保存到本地
+        startZmodemReceive(tab, zsession);
+    }
+}
+
+/**
+ * 启动 ZMODEM 发送（rz 上传）：弹文件选择框，选中后流式读取文件并发送
+ *
+ * 关键设计：用 file.stream() 流式读取，分块发送
+ * - 避免一次性 FileReader.readAsArrayBuffer 加载大文件到内存（300MB 会卡死浏览器）
+ * - 每块 64KB，控制单条 WebSocket 消息大小，避免触发服务端缓冲区上限
+ * - 通过 socket.bufferedAmount 检查 WebSocket 背压，避免浏览器内部缓冲爆炸
+ * - 退回方案：旧浏览器用 file.slice().arrayBuffer() 分块读取
+ */
+function startZmodemSend(tab, zsession) {
+    const fileInput = document.getElementById('zmodemFileInput');
+    // 重置 value 以便重复选择同一文件也能触发 change 事件
+    fileInput.value = '';
+
+    showZmodemModal('ZMODEM 上传 (rz)', '等待选择文件...', '', 0);
+    setZmodemProgressText('请在弹出的文件选择框中选择要上传的文件');
+
+    const changeHandler = async () => {
+        fileInput.removeEventListener('change', changeHandler);
+        // 移除文件对话框 focus 兜底监听器（change 事件已触发，兜底逻辑不再需要）
+        if (tab.fileDialogFocusListener) {
+            window.removeEventListener('focus', tab.fileDialogFocusListener);
+            tab.fileDialogFocusListener = null;
+        }
+        if (!fileInput.files || fileInput.files.length === 0) {
+            // 用户取消选择，终止 ZMODEM 会话
+            abortZmodemSession(tab, zsession, '用户取消选择文件');
+            return;
+        }
+        const file = fileInput.files[0];
+        const totalSize = file.size;
+
+        // 大文件前置确认：超过 1GB 时弹确认框，避免误传超大文件导致上传中途失败/网络拥堵
+        const LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024;  // 1GB
+        if (totalSize > LARGE_FILE_THRESHOLD) {
+            const confirmed = window.confirm(
+                '文件大小 ' + formatBytes(totalSize) + ' 超过 1GB，上传可能耗时较长且占用较多网络资源。\n是否继续？'
+            );
+            if (!confirmed) {
+                abortZmodemSession(tab, zsession, '用户取消大文件上传');
+                return;
+            }
+        }
+
+        updateZmodemModalHeader('上传: ' + file.name, formatBytes(totalSize));
+        setZmodemProgressText('上传中... 0%');
+
+        let sentBytes = 0;
+        // 进度更新辅助函数
+        const reportProgress = () => {
+            const pct = totalSize > 0 ? Math.floor(sentBytes / totalSize * 100) : 0;
+            updateZmodemProgress(pct, '上传中... ' + pct + '%  ' + formatBytes(sentBytes) + ' / ' + formatBytes(totalSize));
+        };
+        // WebSocket 背压检查：缓冲区 > 1MB 时让出主线程，循环等待直到降到阈值以下
+        // 必须用 while 而非 if：10ms 后 bufferedAmount 可能仍 > 1MB（慢网络），
+        // 若继续推下一块会让缓冲累积到几十甚至上百 MB，触发浏览器 OOM 或 Tomcat 1009 断连
+        // 加最大等待次数兜底，避免对端异常时永久卡住（10min 上限）
+        const waitForBackpressure = async () => {
+            if (!tab.socket) return;
+            let maxWaits = 60000;
+            while (tab.socket.bufferedAmount > 1024 * 1024 && maxWaits-- > 0) {
+                await new Promise(r => setTimeout(r, 10));
+            }
+        };
+
+        try {
+            // 构造文件元数据对象（与 Zmodem.Browser.send_files 内部一致）
+            const fileObj = {
+                obj: file,
+                name: file.name,
+                size: file.size,
+                mtime: new Date(file.lastModified),
+                files_remaining: 1,
+                bytes_remaining: file.size
+            };
+
+            // send_offer 发送 ZFILE 头并等待对端 ZRPOS（对端 rz 准备好接收）
+            // 返回 xfer 对象；若对端拒绝则返回 undefined
+            const xfer = await zsession.send_offer(fileObj);
+            if (xfer === undefined) {
+                throw new Error('对端拒绝接收文件');
+            }
+
+            // 分块大小：64KB。zmodem.js 内部会再拆成 ZDATA 子包（默认 1KB）
+            // 这里 64KB 是单条 WebSocket 消息的上限控制，平衡吞吐与内存
+            const CHUNK_SIZE = 64 * 1024;
+
+            // 流式读取并发送：优先用 file.stream()（现代浏览器），否则退回 file.slice 分块
+            if (file.stream) {
+                const reader = file.stream().getReader();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    // value 是 Uint8Array，可能大于 CHUNK_SIZE，需再分块
+                    let offset = 0;
+                    while (offset < value.length) {
+                        const sz = Math.min(CHUNK_SIZE, value.length - offset);
+                        const chunk = value.slice(offset, offset + sz);
+                        xfer.send(chunk);
+                        sentBytes += chunk.length;
+                        offset += sz;
+                        await waitForBackpressure();
+                    }
+                    reportProgress();
+                }
+            } else {
+                // 退回方案：用 Blob.slice 分块读取（兼容旧浏览器）
+                const READ_SIZE = 1 * 1024 * 1024;  // 1MB 每次读取
+                let fileOffset = 0;
+                while (fileOffset < totalSize) {
+                    const end = Math.min(fileOffset + READ_SIZE, totalSize);
+                    const arrayBuffer = await file.slice(fileOffset, end).arrayBuffer();
+                    const bytes = new Uint8Array(arrayBuffer);
+                    let innerOffset = 0;
+                    while (innerOffset < bytes.length) {
+                        const sz = Math.min(CHUNK_SIZE, bytes.length - innerOffset);
+                        const chunk = bytes.slice(innerOffset, innerOffset + sz);
+                        xfer.send(chunk);
+                        sentBytes += chunk.length;
+                        innerOffset += sz;
+                        await waitForBackpressure();
+                    }
+                    fileOffset = end;
+                    reportProgress();
+                }
+            }
+
+            // 发送 ZEOF（end 返回 Promise，等对端 ZFIN 响应）
+            await xfer.end(new Uint8Array(0));
+            updateZmodemProgress(100, '上传完成');
+
+            // 关闭 ZMODEM 会话（发送 ZFIN 等待对端 ZFIN 回执）
+            // 加 5s 超时兜底：对端 rz 进程异常退出未回 ZFIN 时，避免无限等待导致 UI 永久卡住
+            // 超时后走下面的兜底 abort 逻辑（has_ended 检查通过才 abort）
+            await Promise.race([
+                zsession.close(),
+                new Promise(resolve => setTimeout(resolve, 5000))
+            ]);
+
+            // 直接切换弹窗到"完成"状态（按钮变"确定"）
+            closeZmodemModal(true);
+            // 兜底清理：仅在会话未正常结束时才强制 abort
+            // (zsession.close() 后 session_end 通常已触发，has_ended() 返回 true，此时不能调用 abort()
+            //  否则会向 SSH 通道发送 CAN/BS 字节，可能导致 SSH 连接断开重连)
+            try {
+                if (typeof zsession.has_ended === 'function' && !zsession.has_ended() && typeof zsession.abort === 'function') {
+                    zsession.abort();
+                }
+            } catch (e) { /* ignore */ }
+            if (activeZmodemSession === zsession) {
+                activeZmodemSession = null;
+                activeZmodemTab = null;
+            }
+            if (tab.zmodemSession === zsession) {
+                tab.zmodemSession = null;
+            }
+        } catch (err) {
+            // already_aborted 表示会话已正常结束（close() 触发的 session_end），
+            // 不是真正的上传失败，只做清理，不显示错误
+            if (err && (err.type === 'already_aborted' || /already aborted/i.test(err.message || ''))) {
+                console.debug('ZMODEM session already ended, treat as success');
+                if (activeZmodemSession === zsession) {
+                    activeZmodemSession = null;
+                    activeZmodemTab = null;
+                }
+                if (tab.zmodemSession === zsession) {
+                    tab.zmodemSession = null;
+                }
+                return;
+            }
+            console.error('ZMODEM send failed:', err);
+            abortZmodemSession(tab, zsession, '上传失败: ' + (err && err.message ? err.message : err));
+        }
+    };
+
+    fileInput.addEventListener('change', changeHandler);
+    fileInput.click();
+
+    // 兜底：某些浏览器（如 Firefox/Safari）在用户取消文件选择对话框时不触发 change 事件，
+    // 导致 rz 会话永久挂起（sentry 持续占用字节流，终端卡死）。
+    // window 的 focus 事件在对话框关闭后触发，延迟 300ms 等待可能的 change 事件先处理，
+    // 若此时仍未选择文件且会话仍存活，走取消流程。
+    // changeHandler 正常触发后会移除自身监听并处理文件，此处检查 tab.zmodemSession
+    // 避免与 changeHandler 中的 abort 重复（已 abort 后 zmodemSession 被置 null）。
+    const onFileDialogClosed = () => {
+        setTimeout(() => {
+            window.removeEventListener('focus', onFileDialogClosed);
+            tab.fileDialogFocusListener = null;
+            if (tab.zmodemSession === zsession && (!fileInput.files || fileInput.files.length === 0)) {
+                fileInput.removeEventListener('change', changeHandler);
+                abortZmodemSession(tab, zsession, '用户取消选择文件');
+            }
+        }, 300);
+    };
+    // 存储引用到 tab，供 closeTab / onclose / abortZmodemSession 等外部路径清理
+    tab.fileDialogFocusListener = onFileDialogClosed;
+    window.addEventListener('focus', onFileDialogClosed);
+}
+
+// 保存方式选择阶段的 resolve 函数（供取消按钮在选保存方式阶段触发取消）
+let pendingReceiveResolver = null;
+
+/**
+ * 启动 ZMODEM 接收（sz 下载）：监听 offer 事件，接受后保存到本地磁盘
+ *
+ * 关键设计：先让用户选择保存方式，再开始接收数据（顺序流程）
+ * - offer 触发后先弹出自定义保存方式选择界面（不调用 accept，sz 端会等待）
+ * - 用户点击"选择保存位置" → 调用 showSaveFilePicker 让用户选保存目录
+ * - 用户点击"默认下载目录" → 直接走浏览器默认下载
+ * - 用户选择完成后才调用 accept()，通过 on_input 回调实时更新进度条
+ * - 这样进度条只在用户确认保存方式后才开始走，避免"还没点保存进度条就走完"的问题
+ *
+ * 保存位置选择优先级：
+ * - Chrome/Edge 86+：showSaveFilePicker 弹"另存为"对话框
+ * - Firefox/Safari/旧浏览器：只能走浏览器默认下载目录（隐藏"选择保存位置"按钮）
+ */
+function startZmodemReceive(tab, zsession) {
+    showZmodemModal('ZMODEM 下载 (sz)', '等待远程发送...', '', 0);
+    setZmodemProgressText('等待远程文件信息...');
+    // 初始隐藏进度区，等待 offer 到来后再显示保存方式选择
+    document.getElementById('zmodemProgressArea').style.display = 'none';
+    document.getElementById('zmodemSaveChoice').style.display = 'none';
+
+    zsession.on('offer', async (xfer) => {
+        const details = xfer.get_details();
+        const name = details.name || 'unknown';
+        const size = details.size || 0;
+
+        updateZmodemModalHeader('下载: ' + name, formatBytes(size));
+
+        const useFileSystemApi = typeof window.showSaveFilePicker === 'function';
+
+        // 大文件预检查：不支持流式写盘的浏览器（Firefox/Safari）走默认下载会全量缓存到内存，
+        // 超大文件可能导致浏览器 OOM。提示用户切换浏览器或确认继续。
+        const LARGE_DOWNLOAD_THRESHOLD = 1 * 1024 * 1024 * 1024;  // 1GB
+        if (!useFileSystemApi && size > LARGE_DOWNLOAD_THRESHOLD) {
+            const confirmed = window.confirm(
+                '文件大小 ' + formatBytes(size) + ' 超过 1GB，当前浏览器不支持流式保存，\n' +
+                '下载过程将全量缓存到内存（可能导致浏览器卡死或 OOM）。\n' +
+                '建议使用 Chrome/Edge 浏览器以获得流式下载体验。\n\n是否仍然继续下载？'
+            );
+            if (!confirmed) {
+                try { xfer.skip(); } catch (e) { /* ignore */ }
+                closeZmodemModal(false);
+                // 兜底清理（与 cancel 路径一致）：xfer.skip() 后 sz 应发 ZFIN 触发 session_end，
+                // 但 sz 可能异常退出不发 ZFIN，延迟 3s 检查并强制 abort
+                setTimeout(() => {
+                    try {
+                        if (typeof zsession.has_ended === 'function' && !zsession.has_ended() && typeof zsession.abort === 'function') {
+                            zsession.abort();
+                        }
+                    } catch (e) { /* ignore */ }
+                    if (activeZmodemSession === zsession) {
+                        activeZmodemSession = null;
+                        activeZmodemTab = null;
+                    }
+                    if (tab.zmodemSession === zsession) {
+                        tab.zmodemSession = null;
+                    }
+                }, 3000);
+                return;
+            }
+        }
+
+        const saveChoiceEl = document.getElementById('zmodemSaveChoice');
+        const chooseSaveBtn = document.getElementById('zmodemChooseSave');
+        const defaultDlBtn = document.getElementById('zmodemDefaultDownload');
+        const progressAreaEl = document.getElementById('zmodemProgressArea');
+
+        // 浏览器不支持 File System Access API 时隐藏"选择保存位置"按钮
+        chooseSaveBtn.style.display = useFileSystemApi ? '' : 'none';
+        // 显示保存方式选择，隐藏进度区
+        saveChoiceEl.style.display = '';
+        progressAreaEl.style.display = 'none';
+        setZmodemProgressText('');
+
+        // 等待用户点击保存方式按钮（或取消按钮）
+        const userChoice = await new Promise((resolve) => {
+            pendingReceiveResolver = resolve;
+
+            const onChoose = async () => {
+                cleanup();
+                try {
+                    const handle = await window.showSaveFilePicker({ suggestedName: name });
+                    const writable = await handle.createWritable();
+                    resolve({ type: 'writable', writable });
+                } catch (err) {
+                    if (err && err.name === 'AbortError') {
+                        // 用户在系统保存对话框中取消，回到保存方式选择界面
+                        saveChoiceEl.style.display = '';
+                        rebind();
+                    } else {
+                        console.warn('showSaveFilePicker failed, fallback to default:', err);
+                        resolve({ type: 'default' });
+                    }
+                }
+            };
+            const onDefault = () => {
+                cleanup();
+                resolve({ type: 'default' });
+            };
+
+            const rebind = () => {
+                chooseSaveBtn.addEventListener('click', onChoose);
+                defaultDlBtn.addEventListener('click', onDefault);
+                // cleanup() 已把 pendingReceiveResolver 置 null，这里必须恢复
+                // 否则用户在系统保存对话框取消后，再点弹窗"取消传输"按钮时
+                // 进不去 pendingReceiveResolver 分支，会落到 abortZmodemSession
+                // 导致流程不一致（能取消但外层 Promise 永远悬挂不 resolve）
+                pendingReceiveResolver = resolve;
+            };
+            const cleanup = () => {
+                chooseSaveBtn.removeEventListener('click', onChoose);
+                defaultDlBtn.removeEventListener('click', onDefault);
+                pendingReceiveResolver = null;
+            };
+
+            rebind();
+        });
+
+        // 用户取消（通过取消按钮触发 pendingReceiveResolver）
+        if (userChoice.type === 'cancel') {
+            try { xfer.skip(); } catch (e) { /* ignore */ }
+            closeZmodemModal(false);
+            // 兜底清理：xfer.skip() 后 sz 应发 ZFIN 结束会话触发 session_end，
+            // 但 sz 可能异常退出不发 ZFIN（进程被 kill / 网络中断 / 协议错误），
+            // 导致 session_end 不触发、sentry 持续占用字节流使终端卡死。
+            // 延迟 3s 检查会话状态，未结束则强制 abort 并清理全局状态。
+            // 与 startZmodemSend 的成功路径保持一致的清理模式。
+            setTimeout(() => {
+                try {
+                    if (typeof zsession.has_ended === 'function' && !zsession.has_ended() && typeof zsession.abort === 'function') {
+                        zsession.abort();
+                    }
+                } catch (e) { /* ignore */ }
+                if (activeZmodemSession === zsession) {
+                    activeZmodemSession = null;
+                    activeZmodemTab = null;
+                }
+                if (tab.zmodemSession === zsession) {
+                    tab.zmodemSession = null;
+                }
+            }, 3000);
+            return;
+        }
+
+        // 用户已选择保存方式，开始接收数据
+        saveChoiceEl.style.display = 'none';
+        progressAreaEl.style.display = '';
+        updateZmodemProgress(0, '开始接收...');
+
+        const writable = userChoice.type === 'writable' ? userChoice.writable : null;
+        // File System Access 模式下流式写盘（边收边写），避免大文件全缓存内存爆炸
+        // 默认下载模式下仍需收集所有 chunks（save_to_disk 需要完整数据）
+        const chunks = writable ? null : [];
+        let received = 0;
+        // 写入 Promise 链：串行化 writable.write，保证写入顺序且不阻塞 on_input 回调
+        // on_input 是同步回调，writable.write 返回 Promise，需手动链式管理
+        let writeChain = Promise.resolve();
+        let writeError = null;
+
+        // accept() 发送 ZRPOS，sz 收到后开始发 ZDATA
+        // on_input 回调在每个数据块到达时触发，实时更新进度条
+        const acceptPromise = xfer.accept({
+            on_input: (payload) => {
+                const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+                if (writable) {
+                    // 流式写盘：链式追加写入任务，避免一次性缓存整个文件
+                    // 首次错误后停止追加（writeError 非空时跳过后续写入）
+                    if (writeError === null) {
+                        writeChain = writeChain.then(() => writable.write(bytes)).catch(e => {
+                            writeError = e;
+                            throw e;
+                        });
+                    }
+                } else {
+                    chunks.push(bytes);
+                }
+                received += bytes.length;
+                const pct = size > 0 ? Math.floor(received / size * 100) : 0;
+                updateZmodemProgress(pct, '下载中... ' + pct + '%  ' + formatBytes(received) + ' / ' + formatBytes(size));
+            }
+        });
+
+        try {
+            // 等待数据接收完成（acceptPromise 在收到 ZEOF 时 resolve）
+            await acceptPromise;
+
+            if (writable) {
+                // 等待所有流式写入任务完成后再关闭文件句柄
+                await writeChain;
+                await writable.close();
+            } else {
+                // 退回到浏览器默认下载（<a download> 触发）
+                await Zmodem.Browser.save_to_disk(chunks, name);
+            }
+            updateZmodemProgress(100, '下载完成');
+            // 直接切换弹窗到"完成"状态（按钮变"确定"）
+            closeZmodemModal(true);
+            // 先尝试优雅关闭（ZFIN 握手），5s 超时后强制 abort 兜底
+            // 与 startZmodemSend 成功路径保持一致，让 sz 进程正常退出而非被 CAN 杀死
+            try {
+                await Promise.race([
+                    zsession.close(),
+                    new Promise(resolve => setTimeout(resolve, 5000))
+                ]);
+            } catch (e) { /* close 失败不影响下载结果，继续走 abort 兜底 */ }
+            // 传输完成后强制结束 ZMODEM 会话，释放 sentry 对字节流的占用
+            // 不依赖 session_end 事件（某些情况下 sz 不发 ZFIN/"OO"，导致 sentry 一直占用 → 终端卡死）
+            // 仅在会话未正常结束时才 abort()，避免向 SSH 通道发送多余的 CAN/BS 字节
+            try {
+                if (typeof zsession.has_ended === 'function' && !zsession.has_ended() && typeof zsession.abort === 'function') {
+                    zsession.abort();
+                }
+            } catch (e) { /* ignore */ }
+            // 兜底清理全局状态（session_end 处理函数也会做同样清理，此处确保万无一失）
+            if (activeZmodemSession === zsession) {
+                activeZmodemSession = null;
+                activeZmodemTab = null;
+            }
+            if (tab.zmodemSession === zsession) {
+                tab.zmodemSession = null;
+            }
+        } catch (err) {
+            console.error('ZMODEM receive failed:', err);
+            // 失败时关闭文件句柄并跳过该文件，避免阻塞后续传输
+            if (writable) {
+                try { await writable.abort(); } catch (e) { /* ignore */ }
+            }
+            try { xfer.skip(); } catch (e) { /* ignore */ }
+            setZmodemProgressText('下载失败: ' + (err && err.message ? err.message : err));
+            // 失败也要清理会话，避免终端卡死（同样检查 has_ended 避免多余 abort）
+            try {
+                if (typeof zsession.has_ended === 'function' && !zsession.has_ended() && typeof zsession.abort === 'function') {
+                    zsession.abort();
+                }
+            } catch (e) { /* ignore */ }
+            if (activeZmodemSession === zsession) {
+                activeZmodemSession = null;
+                activeZmodemTab = null;
+            }
+            if (tab.zmodemSession === zsession) {
+                tab.zmodemSession = null;
+            }
+        }
+    });
+
+    zsession.start();
+}
+
+/**
+ * 中止 ZMODEM 会话
+ * 调用 zsession.abort() 发送取消信号给对端，并向终端发送 Ctrl+C 让对端 rz/sz 进程退出
+ */
+function abortZmodemSession(tab, zsession, reason) {
+    try {
+        if (typeof zsession.abort === 'function') {
+            zsession.abort();
+        } else {
+            zsession.close();
+        }
+    } catch (e) {
+        // 忽略关闭错误（可能会话已结束）
+    }
+    // 向终端发送 Ctrl+C，确保对端 rz/sz 进程退出
+    // ZMODEM 期间 socket 全走二进制，取消信号也统一走二进制帧
+    // 避免 handleTextMessage 命令拦截逻辑多走一遍（无害但多余）
+    try {
+        if (tab.socket && tab.socket.readyState === WebSocket.OPEN) {
+            tab.socket.send(new Uint8Array([0x03]));
+        }
+    } catch (e) { /* ignore */ }
+
+    closeZmodemModal(false);
+    if (activeZmodemSession === zsession) {
+        activeZmodemSession = null;
+        activeZmodemTab = null;
+    }
+    if (tab.zmodemSession === zsession) {
+        tab.zmodemSession = null;
+    }
+    // 写入取消提示：terminal 可能已 dispose（如 closeTab 竞态路径），包 try/catch 防止抛异常
+    try {
+        if (tab.terminal) {
+            tab.terminal.write('\r\n\x1b[33m[WebSSH] ZMODEM 传输已取消: ' + reason + '\x1b[0m\r\n');
+        }
+    } catch (e) { /* terminal 已 dispose，忽略 */ }
+}
+
+// ===== ZMODEM 弹窗 UI 辅助函数 =====
+
+function showZmodemModal(title, fileName, fileSize, progressPct) {
+    document.getElementById('zmodemTitle').textContent = title || 'ZMODEM 传输';
+    document.getElementById('zmodemFileName').textContent = fileName || '';
+    document.getElementById('zmodemFileSize').textContent = fileSize || '';
+    const bar = document.getElementById('zmodemProgressBar');
+    if (bar) bar.style.width = (progressPct || 0) + '%';
+    setZmodemProgressText('准备中...');
+    // 默认隐藏保存方式选择区、显示进度区（rz 上传直接走进度；
+    // sz 下载会在 offer 到来后切换为保存方式选择）
+    document.getElementById('zmodemSaveChoice').style.display = 'none';
+    document.getElementById('zmodemProgressArea').style.display = '';
+    // 重置底部按钮为"取消传输"（上次完成时会变成"确定"，这里恢复）
+    const cancelBtn = document.getElementById('cancelZmodem');
+    cancelBtn.textContent = '取消传输';
+    cancelBtn.classList.remove('btn-primary');
+    cancelBtn.classList.add('btn-danger');
+    zmodemModalState = 'transfer';
+    // 传输中：显示取消按钮、隐藏关闭按钮
+    cancelBtn.style.display = '';
+    document.getElementById('closeZmodemModal').style.display = 'none';
+    document.getElementById('zmodemModal').classList.add('show');
+}
+
+function updateZmodemModalHeader(fileName, fileSize) {
+    document.getElementById('zmodemFileName').textContent = fileName || '';
+    document.getElementById('zmodemFileSize').textContent = fileSize || '';
+}
+
+function updateZmodemProgress(pct, text) {
+    const bar = document.getElementById('zmodemProgressBar');
+    if (bar) bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    if (text) setZmodemProgressText(text);
+}
+
+function setZmodemProgressText(text) {
+    const el = document.getElementById('zmodemProgressText');
+    if (el) el.textContent = text;
+}
+
+// 弹窗状态：'transfer' 传输中（含保存方式选择阶段）| 'success' 已完成（点击确定关闭）
+let zmodemModalState = 'transfer';
+
+function closeZmodemModal(success) {
+    const modal = document.getElementById('zmodemModal');
+    if (!modal || !modal.classList.contains('show')) return;
+    const cancelBtn = document.getElementById('cancelZmodem');
+    if (success) {
+        // 成功完成：把"取消传输"按钮变成"确定"按钮，由用户点击关闭
+        // 不覆盖进度文本（保留"下载完成"/"上传完成"等具体提示）
+        cancelBtn.textContent = '确定';
+        cancelBtn.classList.remove('btn-danger');
+        cancelBtn.classList.add('btn-primary');
+        zmodemModalState = 'success';
+    } else {
+        modal.classList.remove('show');
+        // 重置按钮状态（下次打开时为"取消传输"）
+        cancelBtn.textContent = '取消传输';
+        cancelBtn.classList.remove('btn-primary');
+        cancelBtn.classList.add('btn-danger');
+        zmodemModalState = 'transfer';
+    }
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0 || bytes == null) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    let n = bytes;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+// ZMODEM 弹窗按钮事件（取消 + 关闭）
+document.addEventListener('DOMContentLoaded', () => {
+    const cancelBtn = document.getElementById('cancelZmodem');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            // 成功完成后点击"确定"：只关闭弹窗，并重置按钮为"取消传输"
+            if (zmodemModalState === 'success') {
+                document.getElementById('zmodemModal').classList.remove('show');
+                cancelBtn.textContent = '取消传输';
+                cancelBtn.classList.remove('btn-primary');
+                cancelBtn.classList.add('btn-danger');
+                zmodemModalState = 'transfer';
+                return;
+            }
+            // 保存方式选择阶段：通过 resolver 触发取消，让 offer 处理函数走取消分支
+            if (pendingReceiveResolver) {
+                pendingReceiveResolver({ type: 'cancel' });
+                pendingReceiveResolver = null;
+                return;
+            }
+            if (activeZmodemSession && activeZmodemTab) {
+                abortZmodemSession(activeZmodemTab, activeZmodemSession, '用户主动取消');
+            }
+        });
+    }
+    const closeBtn = document.getElementById('closeZmodemModal');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            document.getElementById('zmodemModal').classList.remove('show');
+            // 重置底部按钮状态
+            cancelBtn.textContent = '取消传输';
+            cancelBtn.classList.remove('btn-primary');
+            cancelBtn.classList.add('btn-danger');
+            zmodemModalState = 'transfer';
+        });
+    }
+});
+
 async function connectSSHForTab(tab, username, password, isReconnect) {
     if (!tab || !tab.host) return;
     // 清除可能挂起的重连定时器
@@ -2767,6 +3542,11 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
     }
 
     tab.socket = new WebSocket(wsUrl);
+    // 启用二进制帧支持：后端 SSH 输出统一以 BinaryMessage 发送原始字节，
+    // 前端通过 zmodem sentry 分流到终端显示或 ZMODEM 文件传输
+    tab.socket.binaryType = 'arraybuffer';
+    // 为该标签页创建独立的 zmodem sentry（每个 SSH 连接对应一个独立的 sentry 状态机）
+    setupZmodemSentryForTab(tab);
     tab.socket.onopen = () => {
         tab.connected = true;
         tab.reconnectAttempts = 0;
@@ -2822,18 +3602,50 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
     };
     tab.socket.onmessage = (event) => {
         tab.lastOutputTime = Date.now();
-        tab.terminal.write(event.data);
+        // 后端发送的是 BinaryMessage（ArrayBuffer），交给 zmodem sentry 处理：
+        // sentry 会自动识别 ZMODEM 协议帧，普通字节通过 to_terminal 回调写入 xterm，
+        // ZMODEM 协议帧通过 on_detect 触发文件传输流程
+        if (event.data instanceof ArrayBuffer) {
+            tab.zmodemSentry.consume(new Uint8Array(event.data));
+        } else {
+            // 兼容性兜底：若收到 TextMessage（如错误提示），直接写入终端
+            tab.terminal.write(event.data);
+        }
     };
     tab.socket.onclose = (event) => {
         // 忽略已被新连接替换的旧 socket 的关闭事件
         if (event.target !== tab.socket) return;
         tab.connected = false;
+        // 清理该标签页的 ZMODEM 状态：连接断开时对端 rz/sz 进程已退出，
+        // 残留的 activeZmodemSession 会阻止后续传输，必须显式清理
+        if (tab.zmodemSession) {
+            if (activeZmodemSession === tab.zmodemSession) {
+                activeZmodemSession = null;
+                activeZmodemTab = null;
+            }
+            tab.zmodemSession = null;
+            closeZmodemModal(false);
+        }
+        // 清理 sz 保存方式选择阶段的悬挂 Promise：连接断开时 sz 无法继续，
+        // 必须 resolve 让 offer 处理函数走取消分支，避免 Promise 永久悬挂 + 内存泄漏
+        if (pendingReceiveResolver) {
+            pendingReceiveResolver({ type: 'cancel' });
+            pendingReceiveResolver = null;
+        }
+        // 清理 rz 文件对话框 focus 监听器
+        if (tab.fileDialogFocusListener) {
+            window.removeEventListener('focus', tab.fileDialogFocusListener);
+            tab.fileDialogFocusListener = null;
+        }
         if (tab.id === activeTabId) {
             document.getElementById('connectionStatus').innerHTML = '未连接';
             // 终端断开时停止监控，重连成功后由文件会话重建回调恢复
             stopMonitor();
         }
-        tab.terminal.write('\r\n\x1b[31m连接已断开\x1b[0m\r\n');
+        // terminal 可能已被 dispose（closeTab 竞态：socket.close 后同步 dispose terminal，onclose 异步触发）
+        try {
+            tab.terminal.write('\r\n\x1b[31m连接已断开\x1b[0m\r\n');
+        } catch (e) { /* terminal 已 dispose，忽略 */ }
         renderTabBar();
         // 非用户主动关闭时触发自动重连
         if (!tab.manualClose) {

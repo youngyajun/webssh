@@ -10,6 +10,7 @@
     <script src="js/xterm-5.5.0.js"></script>
     <script src="js/xterm-addon-fit.min-0.8.0.js"></script>
     <script src="js/jsencrypt.min.js"></script>
+    <script src="js/zmodem.min.js"></script>
     <script src="js/webssh.js"></script>
 </head>
 <body data-theme="dark">
@@ -388,6 +389,42 @@
 
     <!-- 隐藏的文件选择器，用于上传 -->
     <input type="file" id="hiddenFileInput" style="display: none;" multiple>
+    <!-- 隐藏的文件选择器，专用于 ZMODEM rz 上传（不支持 multiple，rz 协议单文件流） -->
+    <input type="file" id="zmodemFileInput" style="display: none;">
+
+    <!-- ZMODEM rz/sz 传输进度对话框 -->
+    <div class="modal" id="zmodemModal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <span class="modal-title" id="zmodemTitle">ZMODEM 传输</span>
+                <button class="modal-close" id="closeZmodemModal" style="display:none;">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align: center; padding: 6px 0;">
+                    <div id="zmodemFileName" style="font-size: 15px; font-weight: 600; word-break: break-all; margin-bottom: 8px;"></div>
+                    <div id="zmodemFileSize" style="color: var(--text-muted); font-size: 13px; margin-bottom: 14px;"></div>
+                    <!-- 保存方式选择区（接收前显示） -->
+                    <div id="zmodemSaveChoice" style="display:none; margin-bottom: 14px;">
+                        <div style="margin-bottom: 10px; font-size: 13px; color: var(--text-muted);">请选择保存方式：</div>
+                        <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                            <button class="btn btn-primary" id="zmodemChooseSave">选择保存位置</button>
+                            <button class="btn" id="zmodemDefaultDownload">默认下载目录</button>
+                        </div>
+                    </div>
+                    <!-- 进度条区（接收中显示） -->
+                    <div id="zmodemProgressArea">
+                        <div class="upload-progress-container">
+                            <div class="upload-progress-bar" id="zmodemProgressBar" style="width: 0%;"></div>
+                        </div>
+                        <div id="zmodemProgressText" style="margin-top: 8px; font-size: 13px; color: var(--text-muted);">准备中...</div>
+                    </div>
+                </div>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px;" id="zmodemFooter">
+                    <button class="btn btn-danger" id="cancelZmodem">取消传输</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
 </body>
 </html>

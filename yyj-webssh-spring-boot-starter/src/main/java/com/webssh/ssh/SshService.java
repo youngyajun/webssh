@@ -8,8 +8,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -310,24 +312,55 @@ public class SshService {
     /**
      * 将 SSH 输出回传给前端
      * 在 WebSocket 处理器中由后台线程持续调用
+     * 统一以 BinaryMessage 发送原始字节，前端通过 zmodem sentry 分流：
+     * - ZMODEM 协议帧 → 触发 rz/sz 文件传输
+     * - 普通终端字节 → 解码为 UTF-8 写入 xterm
+     * 这样可避免后端做 charset 转换破坏 ZMODEM 二进制数据
      */
     public void sendHandle(WebSocketSession webSocketSession) throws Exception {
         Channel channel = sessionHolder.getChannel(webSocketSession.getId());
         if (channel == null) {
             return;
         }
+        // 用 ConcurrentWebSocketSessionDecorator 包装：
+        // - sendMessage 异步排队执行，不阻塞读 SSH 线程
+        // - ZMODEM 大文件传输时，rz/sz 的 ZACK 等协议帧能及时回传到前端，避免 zmodem.js 卡死等 ZACK
+        // - bufferSizeLimit=10MB 与 WebSocket 容器缓冲区一致；sendTimeLimit=0 表示不超时（大文件传输耗时长）
+        WebSocketSession asyncSession = new ConcurrentWebSocketSessionDecorator(webSocketSession, 0, 10 * 1024 * 1024);
         InputStream inputStream = channel.getInputStream();
-        byte[] buffer = new byte[1024];
+        // 缓冲区加大以提升 ZMODEM 文件传输吞吐
+        byte[] buffer = new byte[8192];
         int i;
         while ((i = inputStream.read(buffer)) != -1) {
-            if (webSocketSession.isOpen()) {
+            if (asyncSession.isOpen()) {
                 byte[] bytes = new byte[i];
                 System.arraycopy(buffer, 0, bytes, 0, i);
-                webSocketSession.sendMessage(new org.springframework.web.socket.TextMessage(new String(bytes, properties.getCharset())));
+                asyncSession.sendMessage(new BinaryMessage(bytes));
             } else {
                 break;
             }
         }
+    }
+
+    /**
+     * 处理来自前端的二进制输入（ZMODEM rz 上传场景）
+     * 字节直接透传到 SSH 通道，跳过命令行缓冲与高风险命令拦截：
+     * ZMODEM 数据流是二进制协议帧，不应作为 shell 命令解析
+     *
+     * @param webSocketSession WebSocket 会话
+     * @param bytes            前端发来的原始字节
+     */
+    public void recvHandleBinary(WebSocketSession webSocketSession, byte[] bytes) throws Exception {
+        Channel channel = sessionHolder.getChannel(webSocketSession.getId());
+        if (channel == null) {
+            throw new IllegalStateException("SSH通道不存在");
+        }
+        if (bytes == null || bytes.length == 0) {
+            return;
+        }
+        OutputStream outputStream = channel.getOutputStream();
+        outputStream.write(bytes);
+        outputStream.flush();
     }
 
     /**

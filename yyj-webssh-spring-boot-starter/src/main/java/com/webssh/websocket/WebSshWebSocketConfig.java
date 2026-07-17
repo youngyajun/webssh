@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -16,6 +17,7 @@ import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 import org.springframework.web.socket.server.HandshakeInterceptor;
+import org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean;
 
 import java.util.Map;
 
@@ -34,6 +36,22 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
 
     @Autowired
     private WebSshWebSocketHandler webSshWebSocketHandler;
+
+    /**
+     * 配置 WebSocket 容器的缓冲区大小和会话超时
+     * 默认 maxBinaryMessageBufferSize=8KB 太小，ZMODEM rz/sz 大文件传输时
+     * 单条二进制消息可能远超 8KB，会触发 close code 1009 强制断连。
+     * 调大到 10MB 以支持大文件传输；sessionIdleTimeout=0 表示不超时
+     * （ZMODEM 大文件传输耗时长，避免被 idle 检查误杀）
+     */
+    @Bean
+    public ServletServerContainerFactoryBean createWebSocketContainer() {
+        ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
+        container.setMaxBinaryMessageBufferSize(10 * 1024 * 1024);
+        container.setMaxTextMessageBufferSize(1 * 1024 * 1024);
+        container.setMaxSessionIdleTimeout(0L);
+        return container;
+    }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
