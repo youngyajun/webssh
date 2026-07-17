@@ -39,6 +39,11 @@ public class SshService {
     /** 每个 WebSocket 会话的命令行缓冲区，用于检测高风险命令 */
     private final ConcurrentHashMap<String, StringBuilder> commandBuffers = new ConcurrentHashMap<>();
 
+    /** 本地 PTY 模式（type=local）的文件会话 sessionId 集合
+     *  这些会话不持有 JSch Session，executeCommand 通过本地 ProcessBuilder 执行 */
+    private final java.util.Set<String> localFileSessionIds =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
     /** 已编译的高风险命令正则（延迟初始化） */
     private volatile List<Pattern> compiledHighRiskPatterns;
 
@@ -365,15 +370,53 @@ public class SshService {
 
     /**
      * 执行单条命令（非交互式）
+     * 本地模式（type=local）：通过本地 /bin/sh -c 执行
+     * SSH 模式：通过 JSch ChannelExec 执行
      */
     public String executeCommand(String sessionId, String command) throws Exception {
+        if (localFileSessionIds.contains(sessionId)) {
+            return executeLocalCommand(command);
+        }
         return sessionHolder.executeCommand(sessionId, command);
     }
 
     /**
+     * 在本机通过 /bin/sh -c 执行单条命令
+     * stderr 合并到 stdout（与 SSH exec 默认行为一致）
+     */
+    private String executeLocalCommand(String command) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder("/bin/sh", "-c", command);
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        String output;
+        try (java.io.InputStream in = process.getInputStream()) {
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[1024];
+            int len;
+            while ((len = in.read(buffer)) > 0) {
+                baos.write(buffer, 0, len);
+            }
+            output = baos.toString("UTF-8");
+        }
+        int exitCode = process.waitFor();
+        StringBuilder result = new StringBuilder();
+        if (output != null && !output.isEmpty()) {
+            result.append(output);
+        }
+        if (exitCode != 0) {
+            result.append("\n[exit code: ").append(exitCode).append("]\n");
+        }
+        return result.toString();
+    }
+
+    /**
      * 获取 SFTP Channel
+     * 本地模式：抛 UnsupportedOperationException，SFTP 操作不可用
      */
     public com.jcraft.jsch.ChannelSftp getSftpChannel(String sessionId) throws Exception {
+        if (localFileSessionIds.contains(sessionId)) {
+            throw new UnsupportedOperationException("本地 PTY 模式不支持 SFTP 操作，请使用 rz/sz 进行文件传输");
+        }
         return sessionHolder.getSftpChannel(sessionId);
     }
 
@@ -400,6 +443,10 @@ public class SshService {
      * 为文件管理创建独立的 SSH 会话（不依赖 WebSocket）
      * 凭据来源优先级：外部传入（界面输入） > 主机配置（配置文件）
      *
+     * 本地 PTY 模式（type=local）：不创建 JSch Session，仅生成 sessionId 并加入跟踪集合。
+     * 后续 executeCommand/resolveCwd 通过本地 ProcessBuilder 执行；
+     * SFTP 相关操作会抛 UnsupportedOperationException（请使用 rz/sz 或本地 IO）。
+     *
      * @param hostName         主机名称
      * @param overrideUsername 外部传入的用户名（界面输入），为空则回退到配置
      * @param overridePassword 外部传入的密码（界面输入），为空则回退到配置
@@ -411,8 +458,13 @@ public class SshService {
         if (host == null) {
             throw new IllegalArgumentException("未找到主机配置: " + hostName);
         }
-        Session session = connectionFactory.createSession(host, overrideUsername, overridePassword);
         String sessionId = "file-" + java.util.UUID.randomUUID();
+        if (host.isLocal()) {
+            localFileSessionIds.add(sessionId);
+            log.info("WebSSH: 本地文件会话建立成功 sessionId={}, host={}", sessionId, hostName);
+            return sessionId;
+        }
+        Session session = connectionFactory.createSession(host, overrideUsername, overridePassword);
         sessionHolder.putSession(sessionId, session);
         log.info("WebSSH: 文件会话建立成功 sessionId={}, host={}", sessionId, hostName);
         return sessionId;
@@ -420,9 +472,14 @@ public class SshService {
 
     /**
      * 关闭文件管理用的 SSH 会话
+     * 本地模式：仅从 localFileSessionIds 中移除
      */
     public void closeFileSession(String sessionId) {
         if (sessionId != null && !sessionId.isEmpty()) {
+            if (localFileSessionIds.remove(sessionId)) {
+                log.info("WebSSH: 本地文件会话已关闭 {}", sessionId);
+                return;
+            }
             sessionHolder.closeSession(sessionId);
         }
     }
@@ -449,7 +506,11 @@ public class SshService {
             // target 已由上层正则校验仅含路径安全字符，不引号以支持 ~ 展开
             cmd.append("cd ").append(target).append(" && pwd");
         }
-        String output = sessionHolder.executeCommand(sessionId, cmd.toString());
+        // 走本类 executeCommand 而非 sessionHolder.executeCommand：
+        // 本地 PTY 模式（type=local）下 sessionId 不在 sessionHolder.sessionMap 中，
+        // 直接调用会抛 IllegalStateException("SSH会话不存在")，导致跟随终端功能失效。
+        // 本类 executeCommand 已对本地模式做分发，走 /bin/sh -c 执行。
+        String output = executeCommand(sessionId, cmd.toString());
         if (output == null) {
             return "";
         }
@@ -460,9 +521,21 @@ public class SshService {
 
     /**
      * 获取 JSch Session（用于目录下载等需要直接操作底层 Channel 的场景）
+     * 本地模式：返回 null（无 JSch Session）
      */
     public Session getJschSession(String sessionId) {
+        if (localFileSessionIds.contains(sessionId)) {
+            return null;
+        }
         return sessionHolder.getJschSession(sessionId);
+    }
+
+    /**
+     * 判断文件会话是否为本地 PTY 模式（type=local）
+     * 用于 WebSshFileController 在本地模式与 SSH 模式之间分发
+     */
+    public boolean isLocalFileSession(String sessionId) {
+        return sessionId != null && localFileSessionIds.contains(sessionId);
     }
 
     /**
@@ -489,6 +562,7 @@ public class SshService {
             info.put("host", host.getHost());
             info.put("port", host.getPort());
             info.put("username", host.getUsername());
+            info.put("type", host.getType());
             info.put("needCredentials", needsCredentials(host));
             list.add(info);
         }
@@ -498,8 +572,12 @@ public class SshService {
     /**
      * 判断主机是否需要在界面输入凭据
      * 配置了私钥 或 同时配置了用户名和密码 时不需要
+     * 本地 PTY 模式（type=local）：直接启动本机 shell，无需任何 SSH 凭据
      */
     private boolean needsCredentials(WebSshProperties.Host host) {
+        if (host.isLocal()) {
+            return false;
+        }
         boolean hasPrivateKey = host.getPrivateKey() != null && !host.getPrivateKey().isEmpty();
         boolean hasUsername = host.getUsername() != null && !host.getUsername().isEmpty();
         boolean hasPassword = host.getPassword() != null && !host.getPassword().isEmpty();

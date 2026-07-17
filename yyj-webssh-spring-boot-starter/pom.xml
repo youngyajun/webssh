@@ -52,6 +52,13 @@
             <version>${jsch.version}</version>
         </dependency>
 
+        <!-- pty4j：本地 PTY 终端（用于 type=local 主机，启动本地 shell 而非 SSH） -->
+        <dependency>
+            <groupId>org.jetbrains.pty4j</groupId>
+            <artifactId>pty4j</artifactId>
+            <version>${pty4j.version}</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

@@ -1,6 +1,7 @@
 package com.webssh.websocket;
 
 import com.webssh.config.WebSshProperties;
+import com.webssh.ssh.LocalPtyService;
 import com.webssh.util.RsaUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -9,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.http.server.ServletServerHttpRequest;
@@ -36,6 +38,9 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
 
     @Autowired
     private WebSshWebSocketHandler webSshWebSocketHandler;
+
+    @Autowired
+    private LocalPtyService localPtyService;
 
     /**
      * 配置 WebSocket 容器的缓冲区大小和会话超时
@@ -68,8 +73,12 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
     /**
      * 握手拦截器，从 URL 参数中提取 host、username、password 参数
      * password 为 RSA 加密后的 Base64 密文，在此处用 Session 中的私钥解密
+     *
+     * 注意：本拦截器为非静态内部类，以访问外部类的 localPtyService 字段。
+     * Windows + 本地 PTY 模式的拒绝在此完成，避免握手成功后 onopen 触发又被 close
+     * 导致前端重连死循环（onopen 重置 reconnectAttempts → onclose → 重连 → 死循环）。
      */
-    private static class WebSshHandshakeInterceptor implements HandshakeInterceptor {
+    private class WebSshHandshakeInterceptor implements HandshakeInterceptor {
         @Override
         public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
                                        WebSocketHandler wsHandler, Map<String, Object> attributes) {
@@ -87,6 +96,14 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
 
                 String host = servletRequest.getParameter("host");
                 if (host != null && !host.isEmpty()) {
+                    // 本地 PTY 模式在 Windows 上不支持：握手阶段直接拒绝，避免 onopen 触发后
+                    // 后端 initConnection 抛异常关闭导致前端重连死循环
+                    if (localPtyService.isLocalHost(host) && isWindowsOs()) {
+                        log.warn("WebSSH: 拒绝握手 - 本地 PTY 模式不支持 Windows，host={}", host);
+                        response.setStatusCode(HttpStatus.FORBIDDEN);
+                        return false;
+                    }
+
                     attributes.put("host", host);
 
                     // 获取可选的用户名参数
@@ -129,5 +146,12 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
         public void afterHandshake(ServerHttpRequest request, ServerHttpResponse response,
                                    WebSocketHandler wsHandler, Exception exception) {
         }
+    }
+
+    /**
+     * 判断当前 JVM 是否运行在 Windows 上
+     */
+    private static boolean isWindowsOs() {
+        return System.getProperty("os.name", "").toLowerCase().contains("windows");
     }
 }

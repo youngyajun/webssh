@@ -72,7 +72,7 @@ webssh:
 
   # SSH 主机列表
   hosts:
-    - name: 【本地内网-192.168.1.166】
+    - name: 【192.168.1.166】
       host: 192.168.1.166
       port: 22
       # 可以不配置username&password，登录后在界面手动输入
@@ -88,6 +88,13 @@ webssh:
 
       # privateKey: /path/to/id_rsa
       # passphrase: private-key-password
+
+    # 本地PTY模式示例：webssh与目标机同机部署时，直接启动本地 shell，无需SSH凭据
+    # 适用场景：不知道root密码、SSH未开放、或希望减少一层SSH转发开销
+    # 仅支持 Linux/Mac等类Unix系统（Windows 暂不支持，将报错）
+#    - name: 【本机-PTY直连】
+#      host: localhost
+#      type: local
 
   # 高风险命令正则列表（命中任意一条则拒绝通过终端执行）
   high-risk-commands:

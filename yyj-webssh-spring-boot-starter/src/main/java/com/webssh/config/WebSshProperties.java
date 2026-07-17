@@ -394,6 +394,14 @@ public class WebSshProperties {
          */
         private String passphrase;
 
+        /**
+         * 连接类型：
+         *   - "remote"（默认）：通过 SSH 协议连接到 host:port（需要凭据）
+         *   - "local"：直接在本机启动 PTY shell（用于 webssh 与目标机同机部署的场景，
+         *     无需 SSH 凭据；仅 Linux/Mac 等类 Unix 系统支持）
+         */
+        private String type = "remote";
+
         public String getName() {
             return name;
         }
@@ -450,9 +458,25 @@ public class WebSshProperties {
             this.passphrase = passphrase;
         }
 
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        /**
+         * 是否为本地 PTY 模式
+         */
+        public boolean isLocal() {
+            return "local".equalsIgnoreCase(type);
+        }
+
         @Override
         public String toString() {
-            return "Host{name='" + name + "', host='" + host + "', port=" + port + "}";
+            return "Host{name='" + name + "', host='" + host + "', port=" + port
+                    + ", type='" + type + "'}";
         }
     }
 

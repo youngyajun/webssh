@@ -136,7 +136,7 @@ function hasActiveStreamingTab() {
 }
 
 // 通用确认对话框（基于 Promise），风格与页面自定义弹窗保持一致
-function showConfirmDialog(message, { title = '确认', okText = '确定', okClass = 'btn-primary' } = {}) {
+function showConfirmDialog(message, { title = '确认', okText = '确定', okClass = 'btn-primary', showCancel = true } = {}) {
     return new Promise(resolve => {
         const modal = document.getElementById('confirmModal');
         document.getElementById('confirmTitle').textContent = title;
@@ -144,6 +144,9 @@ function showConfirmDialog(message, { title = '确认', okText = '确定', okCla
         const okBtn = document.getElementById('okConfirm');
         okBtn.textContent = okText;
         okBtn.className = 'btn ' + okClass;
+        // 控制取消按钮与关闭按钮的显隐（纯提示场景隐藏）
+        document.getElementById('cancelConfirm').style.display = showCancel ? '' : 'none';
+        document.getElementById('closeConfirmModal').style.display = showCancel ? '' : 'none';
         modal.classList.add('show');
         const cleanup = (result) => {
             modal.classList.remove('show');
@@ -156,9 +159,14 @@ function showConfirmDialog(message, { title = '确认', okText = '确定', okCla
         okBtn.onclick = () => cleanup(true);
         document.getElementById('cancelConfirm').onclick = () => cleanup(false);
         document.getElementById('closeConfirmModal').onclick = () => cleanup(false);
-        // 点击背景遮罩关闭 = 取消
-        modal.onclick = (e) => { if (e.target === e.currentTarget) cleanup(false); };
+        // 点击背景遮罩关闭 = 取消（仅当允许取消时）
+        modal.onclick = (e) => { if (e.target === e.currentTarget && showCancel) cleanup(false); };
     });
+}
+
+// 通用提示对话框（仅"确定"按钮，无取消），用于纯信息展示场景
+function showInfoDialog(message, { title = '提示', okText = '确定' } = {}) {
+    return showConfirmDialog(message, { title, okText, showCancel: false });
 }
 
 // 同步全局变量到指定标签页（从标签页恢复到全局）
@@ -1776,6 +1784,7 @@ function startNewSession(host) {
         return;
     }
     const needCredentials = hostInfo.needCredentials;
+    const isLocal = hostInfo.type === 'local';
 
     const cachedCreds = getCachedCredentials(host);
     if (needCredentials && !cachedCreds) {
@@ -1789,6 +1798,9 @@ function startNewSession(host) {
                 showCredentialDialog();
             }
         });
+    } else if (isLocal) {
+        // 本地 PTY 模式：弹出对话框显示提示，由用户点击"连接"再创建标签
+        showCredentialDialog();
     } else {
         createTab(host, '', '');
     }
@@ -2092,8 +2104,11 @@ function showCredentialDialog() {
     const modal = document.getElementById('credentialModal');
     const hostInfo = hostsInfo.find(h => h.name === currentHost);
     const needCredentials = hostInfo ? hostInfo.needCredentials : true;
+    const isLocal = hostInfo && hostInfo.type === 'local';
 
-    if (!needCredentials) {
+    // 本地 PTY 模式：弹出对话框显示提示，让用户点击"连接"再创建标签
+    // 已配置凭据的 SSH 主机：保持原行为，直接创建标签（无对话框）
+    if (!needCredentials && !isLocal) {
         createTab(currentHost, '', '');
         return;
     }
@@ -2160,7 +2175,7 @@ function populateHostDropdown(query) {
         return;
     }
     dropdown.innerHTML = matched.map(h => {
-        const meta = h.needCredentials ? '需凭据' : '已配置';
+        const meta = h.type === 'local' ? '本地PTY' : (h.needCredentials ? '需凭据' : '已配置');
         return `<div class="host-dropdown-item" data-host="${h.name}">
             <span class="host-item-icon">&#9656;</span>
             <span class="host-item-name">${h.name}</span>
@@ -2215,11 +2230,12 @@ function updateCredentialFormVisibility() {
     const hostInfo = hostsInfo.find(h => h.name === currentHost);
     // 自定义主机（不在配置中）始终需要输入凭据
     const needCredentials = hostInfo ? hostInfo.needCredentials : true;
+    const isLocal = hostInfo && hostInfo.type === 'local';
     const usernameGroup = document.getElementById('credentialUsernameGroup');
     const passwordGroup = document.getElementById('credentialPasswordGroup');
     const rememberGroup = document.getElementById('rememberCredentialsGroup');
     const hint = document.getElementById('credentialConfiguredHint');
-    if (needCredentials) {
+    if (needCredentials && !isLocal) {
         usernameGroup.style.display = '';
         passwordGroup.style.display = '';
         rememberGroup.style.display = '';
@@ -2229,6 +2245,10 @@ function updateCredentialFormVisibility() {
         passwordGroup.style.display = 'none';
         rememberGroup.style.display = 'none';
         hint.style.display = 'block';
+        // 区分"本地 PTY 模式"与"已配置凭据"两种免凭据场景
+        hint.textContent = isLocal
+            ? '本地 PTY 模式，无需 SSH 凭据，可直接点击"连接"'
+            : '该主机已在配置文件中配置账号密码，可直接点击"连接"';
     }
 }
 
@@ -3547,7 +3567,11 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
     tab.socket.binaryType = 'arraybuffer';
     // 为该标签页创建独立的 zmodem sentry（每个 SSH 连接对应一个独立的 sentry 状态机）
     setupZmodemSentryForTab(tab);
+    // 标记握手是否成功：onopen 触发表示握手已通过；若未触发就直接 onclose，
+    // 说明握手阶段被拒绝（如 Windows + 本地 PTY 模式），不应重连避免死循环
+    tab.handshakeOk = false;
     tab.socket.onopen = () => {
+        tab.handshakeOk = true;
         tab.connected = true;
         tab.reconnectAttempts = 0;
         tab.reconnecting = false;
@@ -3641,6 +3665,17 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
             document.getElementById('connectionStatus').innerHTML = '未连接';
             // 终端断开时停止监控，重连成功后由文件会话重建回调恢复
             stopMonitor();
+        }
+        // 握手阶段被拒绝（如 Windows + 本地 PTY 模式）：onopen 从未触发，不重连，
+        // 避免死循环；给出明确提示让用户改用 SSH 模式或更换部署平台
+        if (!tab.handshakeOk) {
+            try {
+                tab.terminal.write('\r\n\x1b[31m连接被拒绝（握手失败）：服务器平台不支持该主机的连接模式。\x1b[0m\r\n');
+                tab.terminal.write('\x1b[33m本地 PTY 模式仅支持 Linux/Mac 服务器；若服务器是 Windows，请改用 SSH 模式。\x1b[0m\r\n');
+            } catch (e) { /* terminal 已 dispose，忽略 */ }
+            tab.reconnecting = false;
+            renderTabBar();
+            return;
         }
         // terminal 可能已被 dispose（closeTab 竞态：socket.close 后同步 dispose terminal，onclose 异步触发）
         try {
@@ -4366,6 +4401,15 @@ let uploadXhr = null; // 当前上传的 XMLHttpRequest，用于取消
 // 批量上传冲突处理状态
 let uploadConflictState = { overwriteAll: false, skipAll: false };
 
+// 判断当前活跃标签页的主机是否为本地 PTY 模式（type=local）
+// 本地 PTY 模式下文件管理器（SFTP）不可用，应阻止相关操作并提示用户改用 rz/sz
+function isCurrentTabLocalPty() {
+    const tab = getActiveTab();
+    if (!tab || !tab.host) return false;
+    const hostInfo = hostsInfo.find(h => h.name === tab.host);
+    return !!(hostInfo && hostInfo.type === 'local');
+}
+
 function initUploadEvents() {
     const uploadBtn = document.getElementById('uploadBtn');
     const hiddenInput = document.getElementById('hiddenFileInput');
@@ -4433,17 +4477,34 @@ function startUpload(files) {
     // 保存文件列表用于回调
     const fileArray = Array.from(files);
     let idx = 0;
+    let successCount = 0;
+    let failCount = 0;
 
     function doNext() {
         if (idx >= fileArray.length) {
-            progressText.textContent = fileArray.length + ' 个文件上传完成';
+            // 全部处理完毕：根据成功/失败计数显示对应文案，避免"失败后又显示完成"的矛盾提示
+            if (failCount === 0) {
+                progressText.textContent = fileArray.length + ' 个文件上传完成';
+            } else if (successCount === 0) {
+                progressText.textContent = fileArray.length + ' 个文件上传失败';
+            } else {
+                progressText.textContent = `完成: ${successCount} 成功, ${failCount} 失败`;
+            }
             progressBar.style.width = '100%';
             footerEl.style.display = 'none';
             uploadXhr = null;
-            loadFiles();
+            // 仅在至少一个文件上传成功时刷新文件列表
+            if (successCount > 0) {
+                loadFiles();
+            }
             return;
         }
-        uploadFileXhr(fileArray[idx], idx, fileArray.length, () => {
+        uploadFileXhr(fileArray[idx], idx, fileArray.length, (success) => {
+            if (success) {
+                successCount++;
+            } else {
+                failCount++;
+            }
             idx++;
             doNext();
         });
@@ -4468,7 +4529,7 @@ function uploadFileXhr(file, index, total, done, overwrite) {
         resultEl.style.display = 'block';
         resultEl.className = 'upload-result error';
         resultEl.textContent = '⚠ 已跳过 (同名)';
-        setTimeout(done, 300);
+        setTimeout(() => done(false), 300);
         return;
     }
 
@@ -4510,7 +4571,7 @@ function uploadFileXhr(file, index, total, done, overwrite) {
                 resultEl.style.display = 'block';
                 resultEl.className = 'upload-result success';
                 resultEl.textContent = '✓ 上传成功';
-                setTimeout(done, 600);
+                setTimeout(() => done(true), 600);
             } else if (resp.code === 409) {
                 // 文件已存在，弹出覆盖确认对话框
                 handleUploadConflict(file, index, total, done);
@@ -4518,13 +4579,13 @@ function uploadFileXhr(file, index, total, done, overwrite) {
                 resultEl.style.display = 'block';
                 resultEl.className = 'upload-result error';
                 resultEl.textContent = '✗ ' + (resp.msg || '上传失败');
-                setTimeout(done, 1500);
+                setTimeout(() => done(false), 1500);
             }
         } catch (e) {
             resultEl.style.display = 'block';
             resultEl.className = 'upload-result error';
             resultEl.textContent = '✗ 响应解析失败';
-            setTimeout(done, 1500);
+            setTimeout(() => done(false), 1500);
         }
     });
 
@@ -4593,7 +4654,7 @@ function handleUploadConflict(file, index, total, done) {
         }
         cleanup();
         resultEl.textContent = '⚠ 已跳过: ' + file.name;
-        setTimeout(done, 300);
+        setTimeout(() => done(false), 300);
     }
 
     function onCancel() {

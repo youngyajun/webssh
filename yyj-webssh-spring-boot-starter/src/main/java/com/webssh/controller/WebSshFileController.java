@@ -4,6 +4,7 @@ import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.Session;
 import com.jcraft.jsch.SftpException;
+import com.webssh.ssh.LocalFileService;
 import com.webssh.ssh.SshService;
 import com.webssh.util.RsaUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -217,6 +218,36 @@ public class WebSshFileController {
                 return result;
             }
 
+            // 本地 PTY 模式：通过 LocalFileService 上传，不走 SFTP
+            if (sshService.isLocalFileSession(sessionId)) {
+                try {
+                    String remotePath = path;
+                    if (!remotePath.endsWith("/")) {
+                        remotePath += "/";
+                    }
+                    remotePath += safeFilename;
+
+                    if (!overwrite && LocalFileService.fileExists(remotePath)) {
+                        result.put("code", 409);
+                        result.put("msg", "文件已存在: " + safeFilename);
+                        return result;
+                    }
+
+                    try (InputStream inputStream = file.getInputStream()) {
+                        LocalFileService.uploadFile(inputStream, remotePath, overwrite);
+                    }
+
+                    result.put("code", 200);
+                    result.put("msg", "上传成功");
+                    result.put("path", remotePath);
+                } catch (Exception e) {
+                    log.error("WebSSH: 上传文件失败（本地模式）", e);
+                    result.put("code", 500);
+                    result.put("msg", "上传失败: " + e.getMessage());
+                }
+                return result;
+            }
+
             sftp = sshService.getSftpChannel(sessionId);
 
             // 构建远程文件完整路径
@@ -329,6 +360,16 @@ public class WebSshFileController {
                 return result;
             }
 
+            // 本地 PTY 模式：通过 LocalFileService 列目录，不走 SFTP
+            if (sshService.isLocalFileSession(sessionId)) {
+                List<Map<String, Object>> fileList = LocalFileService.listFiles(path);
+                result.put("code", 200);
+                result.put("path", path);
+                result.put("parent", getParentPath(path));
+                result.put("files", fileList);
+                return result;
+            }
+
             sftp = sshService.getSftpChannel(sessionId);
             // 规范化路径
             if (!path.startsWith("/")) {
@@ -432,6 +473,20 @@ public class WebSshFileController {
             String parent = lastSlash == 0 ? "/" : input.substring(0, lastSlash);
             String prefix = input.substring(lastSlash + 1);
 
+            // 本地 PTY 模式：通过 LocalFileService 路径建议，不走 SFTP
+            if (sshService.isLocalFileSession(sessionId)) {
+                try {
+                    List<Map<String, String>> suggestions = LocalFileService.suggestPaths(input);
+                    result.put("code", 200);
+                    result.put("suggestions", suggestions);
+                } catch (Exception e) {
+                    log.error("WebSSH: 路径建议失败（本地模式）", e);
+                    result.put("code", 500);
+                    result.put("msg", e.getMessage());
+                }
+                return result;
+            }
+
             sftp = sshService.getSftpChannel(sessionId);
 
             @SuppressWarnings("unchecked")
@@ -494,6 +549,20 @@ public class WebSshFileController {
                 return result;
             }
 
+            // 本地 PTY 模式：通过 LocalFileService 获取当前路径，不走 SFTP
+            if (sshService.isLocalFileSession(sessionId)) {
+                try {
+                    String pwd = LocalFileService.getCurrentPath();
+                    result.put("code", 200);
+                    result.put("path", pwd);
+                } catch (Exception e) {
+                    log.error("WebSSH: 获取当前路径失败（本地模式）", e);
+                    result.put("code", 500);
+                    result.put("msg", e.getMessage());
+                }
+                return result;
+            }
+
             sftp = sshService.getSftpChannel(sessionId);
             String pwd = sftp.pwd();
             result.put("code", 200);
@@ -549,6 +618,73 @@ public class WebSshFileController {
             if (sessionId == null) {
                 result.put("code", 401);
                 result.put("msg", "请先建立SSH连接");
+                return result;
+            }
+
+            // 本地 PTY 模式：通过 executeCommand 执行 stat 命令（已支持本地模式）
+            if (sshService.isLocalFileSession(sessionId)) {
+                String safePath = path.replace("'", "'\\''");
+                String statCommand = "stat --printf 'type=%F\\nperm=%a\\npermHuman=%A\\nsize=%s\\n" +
+                        "uid=%u\\ngid=%g\\nuname=%U\\ngname=%G\\ninode=%i\\nlinks=%h\\n" +
+                        "blocks=%b\\nblksize=%o\\natime=%X\\nmtime=%Y\\nctime=%Z\\n' '" + safePath + "' 2>/dev/null";
+                String output = sshService.executeCommand(sessionId, statCommand).trim();
+
+                if (output.isEmpty()) {
+                    result.put("code", 404);
+                    result.put("msg", "文件或目录不存在");
+                    return result;
+                }
+
+                // 解析 key=value 输出（与原 SSH 模式逻辑一致）
+                Map<String, String> stat = new HashMap<>();
+                for (String line : output.split("\n")) {
+                    int eqIdx = line.indexOf('=');
+                    if (eqIdx > 0) {
+                        stat.put(line.substring(0, eqIdx), line.substring(eqIdx + 1));
+                    }
+                }
+
+                String fileType = stat.getOrDefault("type", "unknown");
+                long totalSize = parseLongSafe(stat.get("size"));
+                String totalSizeFormatted = formatFileSize(totalSize);
+
+                // 目录类型：通过 du -sb 递归统计实际大小
+                if ("directory".equals(fileType)) {
+                    String duCommand = "du -sb '" + safePath + "' 2>/dev/null";
+                    String duOutput = sshService.executeCommand(sessionId, duCommand).trim();
+                    if (!duOutput.isEmpty()) {
+                        String[] parts = duOutput.split("\\s+");
+                        if (parts.length > 0) {
+                            totalSize = parseLongSafe(parts[0]);
+                            totalSizeFormatted = formatFileSize(totalSize);
+                        }
+                    }
+                }
+
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+                Map<String, Object> props = new HashMap<>();
+                props.put("name", extractFilename(path));
+                props.put("path", path);
+                props.put("type", fileType);
+                props.put("permissions", stat.getOrDefault("permHuman", "-"));
+                props.put("permissionsNumeric", stat.getOrDefault("perm", "-"));
+                props.put("size", totalSize);
+                props.put("sizeFormatted", totalSizeFormatted);
+                props.put("uid", stat.getOrDefault("uid", "-"));
+                props.put("gid", stat.getOrDefault("gid", "-"));
+                props.put("owner", stat.getOrDefault("uname", "-"));
+                props.put("group", stat.getOrDefault("gname", "-"));
+                props.put("inode", stat.getOrDefault("inode", "-"));
+                props.put("links", stat.getOrDefault("links", "-"));
+                props.put("blocks", stat.getOrDefault("blocks", "-"));
+                props.put("blockSize", stat.getOrDefault("blksize", "-"));
+                props.put("accessTime", sdf.format(new Date(parseLongSafe(stat.get("atime")) * 1000L)));
+                props.put("modifyTime", sdf.format(new Date(parseLongSafe(stat.get("mtime")) * 1000L)));
+                props.put("changeTime", sdf.format(new Date(parseLongSafe(stat.get("ctime")) * 1000L)));
+
+                result.put("code", 200);
+                result.put("data", props);
                 return result;
             }
 
@@ -700,6 +836,33 @@ public class WebSshFileController {
                 return result;
             }
 
+            // 本地 PTY 模式：通过 executeCommand 执行 du -sb（已支持本地模式）
+            if (sshService.isLocalFileSession(sessionId)) {
+                try {
+                    String safePath = path.replace("'", "'\\''");
+                    String duCommand = "du -sb '" + safePath + "' 2>/dev/null";
+                    String output = sshService.executeCommand(sessionId, duCommand).trim();
+
+                    if (output.isEmpty()) {
+                        result.put("code", 404);
+                        result.put("msg", "目录不存在或无法访问");
+                        return result;
+                    }
+
+                    String[] parts = output.split("\\s+");
+                    long size = parseLongSafe(parts[0]);
+
+                    result.put("code", 200);
+                    result.put("size", size);
+                    result.put("sizeFormatted", formatFileSize(size));
+                } catch (Exception e) {
+                    log.error("WebSSH: 计算目录大小失败（本地模式）", e);
+                    result.put("code", 500);
+                    result.put("msg", e.getMessage());
+                }
+                return result;
+            }
+
             Session jschSession = sshService.getJschSession(sessionId);
             if (jschSession == null) {
                 result.put("code", 401);
@@ -770,6 +933,21 @@ public class WebSshFileController {
                 return;
             }
 
+            // 本地 PTY 模式：通过 LocalFileService 下载文件，不走 SFTP
+            if (sshService.isLocalFileSession(sessionId)) {
+                try {
+                    String filename = extractFilename(path);
+                    response.setContentType("application/octet-stream");
+                    response.setHeader("Content-Disposition",
+                            "attachment; filename=\"" + filename + "\"");
+                    LocalFileService.downloadFile(path, response.getOutputStream());
+                } catch (Exception e) {
+                    log.error("WebSSH: 下载文件失败（本地模式）", e);
+                    response.setStatus(500);
+                }
+                return;
+            }
+
             sftp = sshService.getSftpChannel(sessionId);
 
             String filename = extractFilename(path);
@@ -821,6 +999,21 @@ public class WebSshFileController {
             sessionId = resolveSessionId(sessionId, httpSession);
             if (sessionId == null) {
                 writeJson(response, 401, "请先建立SSH连接");
+                return;
+            }
+
+            // 本地 PTY 模式：通过 LocalFileService 下载目录，不走 SFTP/exec
+            if (sshService.isLocalFileSession(sessionId)) {
+                try {
+                    String dirName = extractFilename(path);
+                    response.setContentType("application/gzip");
+                    response.setHeader("Content-Disposition",
+                            "attachment; filename=\"" + dirName + ".tar.gz\"");
+                    LocalFileService.downloadDirectory(path, response.getOutputStream());
+                } catch (Exception e) {
+                    log.error("WebSSH: 下载目录失败（本地模式）", e);
+                    response.setStatus(500);
+                }
                 return;
             }
 
@@ -938,6 +1131,23 @@ public class WebSshFileController {
             if (sessionId == null || sessionId.isEmpty()) {
                 result.put("code", 401);
                 result.put("msg", "请先建立SSH连接");
+                return result;
+            }
+
+            // 本地 PTY 模式：通过 LocalFileService 预览文件，不走 SFTP
+            if (sshService.isLocalFileSession(sessionId)) {
+                try {
+                    long maxSize = 2 * 1024 * 1024; // 2MB
+                    String content = LocalFileService.previewFile(path, maxSize);
+                    result.put("code", 200);
+                    result.put("path", path);
+                    result.put("size", content.length());
+                    result.put("content", content);
+                } catch (Exception e) {
+                    log.error("WebSSH: 预览文件失败（本地模式）", e);
+                    result.put("code", 500);
+                    result.put("msg", e.getMessage());
+                }
                 return result;
             }
 
@@ -1307,9 +1517,15 @@ public class WebSshFileController {
      * 此类错误由前端自动重连处理，无需以 ERROR 级别打印完整堆栈
      */
     private boolean isSessionExpiredError(Exception e) {
-        return e instanceof IllegalStateException
-                && e.getMessage() != null
-                && e.getMessage().contains("SSH会话不存在");
+        if (e instanceof IllegalStateException) {
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("SSH会话不存在")) {
+                return true;
+            }
+        }
+        // 本地 PTY 模式（type=local）的预期错误：SFTP 操作不可用
+        // 走 warn 路径，避免 ERROR 堆栈噪音
+        return e instanceof UnsupportedOperationException;
     }
 
     /**
