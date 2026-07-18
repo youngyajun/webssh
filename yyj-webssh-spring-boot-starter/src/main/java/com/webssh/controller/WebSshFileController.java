@@ -6,7 +6,7 @@ import com.jcraft.jsch.Session;
 import com.jcraft.jsch.SftpException;
 import com.webssh.ssh.LocalFileService;
 import com.webssh.ssh.SshService;
-import com.webssh.util.RsaUtil;
+import com.webssh.util.RsaSessionHelper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
@@ -79,7 +79,7 @@ public class WebSshFileController {
             String keyId = params.get("keyId");
 
             // 使用 keyId 从 Session 映射表中取出私钥解密密码（与登录流程一致，私钥一次性使用）
-            String password = RsaUtil.decryptWithSessionKey(session, encryptedPassword, keyId);
+            String password = RsaSessionHelper.decryptWithSessionKey(session, encryptedPassword, keyId);
 
             String sessionId = sshService.createFileSession(host, username, password);
             // 追踪所有文件会话，用于 logout 时统一清理

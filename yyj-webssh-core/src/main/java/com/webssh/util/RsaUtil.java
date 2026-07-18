@@ -1,7 +1,5 @@
 package com.webssh.util;
 
-import jakarta.servlet.http.HttpSession;
-
 import javax.crypto.Cipher;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -17,12 +15,29 @@ import java.util.concurrent.ConcurrentHashMap;
  * RSA 加解密工具类
  * 用于登录密码的加密传输：前端用公钥加密，后端用私钥解密
  *
+ * <p>多版本适配说明：
+ * 本类位于 servlet-free 的 core 模块，不依赖 HttpSession。
+ * 调用方（各版本 starter）负责将 {@code Map<String, PrivateKey>} 存入/取出 HttpSession，
+ * 见常量 {@link #SESSION_RSA_KEY_MAP}。</p>
+ *
  * @author webssh
  */
 public class RsaUtil {
     /**
      * Session 中存储 RSA 私钥映射表的 key
      * 使用 Map<keyId, PrivateKey> 支持并发加密请求，避免多标签页/多连接场景下的私钥覆盖问题
+     *
+     * <p>starter 端使用示例：</p>
+     * <pre>{@code
+     * Map<String, PrivateKey> keyMap = (Map<String, PrivateKey>) session.getAttribute(RsaUtil.SESSION_RSA_KEY_MAP);
+     * if (keyMap == null) {
+     *     keyMap = new ConcurrentHashMap<>();
+     *     session.setAttribute(RsaUtil.SESSION_RSA_KEY_MAP, keyMap);
+     * }
+     * String keyId = RsaUtil.storePrivateKey(keyMap, keyPair.getPrivate());
+     * // ... 前端回传 keyId + 密文 ...
+     * String password = RsaUtil.decryptWithSessionKey(keyMap, encryptedPassword, keyId);
+     * }</pre>
      */
     public static final String SESSION_RSA_KEY_MAP = "webssh_rsa_key_map";
 
@@ -77,36 +92,34 @@ public class RsaUtil {
     }
 
     /**
-     * 将私钥存入 Session 的映射表，返回唯一的 keyId
+     * 将私钥存入映射表，返回唯一的 keyId
      * 前端在加密时获取公钥和 keyId，解密时将 keyId 一并传回后端
      *
-     * @param session    HttpSession
+     * @param keyMap     私钥映射表（由调用方管理生命周期，通常存于 HttpSession）
      * @param privateKey 要存储的私钥
      * @return keyId，用于后续解密时查找对应私钥
      */
-    public static String storePrivateKey(HttpSession session, PrivateKey privateKey) {
-        Map<String, PrivateKey> keyMap = getKeyMap(session);
+    public static String storePrivateKey(Map<String, PrivateKey> keyMap, PrivateKey privateKey) {
         String keyId = UUID.randomUUID().toString();
         keyMap.put(keyId, privateKey);
         return keyId;
     }
 
     /**
-     * 从 Session 映射表中按 keyId 取出私钥解密密码，解密后移除该私钥（一次性使用）
+     * 从映射表中按 keyId 取出私钥解密密码，解密后移除该私钥（一次性使用）
      * 用于登录及新建会话等场景的密码加密传输
      *
-     * @param session          HttpSession
+     * @param keyMap           私钥映射表（由调用方管理生命周期，通常存于 HttpSession）
      * @param encryptedPassword Base64 编码的密文，为空则返回 null（表示无需解密，回退到配置文件凭据）
      * @param keyId            公钥获取时返回的 keyId，用于查找对应私钥
      * @return 解密后的明文密码；密文为空时返回 null
      * @throws Exception 私钥不存在或解密失败时抛出
      */
-    public static String decryptWithSessionKey(HttpSession session, String encryptedPassword,
+    public static String decryptWithSessionKey(Map<String, PrivateKey> keyMap, String encryptedPassword,
                                                String keyId) throws Exception {
         if (encryptedPassword == null || encryptedPassword.isEmpty()) {
             return null;
         }
-        Map<String, PrivateKey> keyMap = getKeyMap(session);
         PrivateKey privateKey = keyMap.remove(keyId);
         if (privateKey == null) {
             throw new IllegalStateException("公钥已过期，请刷新页面重试");
@@ -115,15 +128,12 @@ public class RsaUtil {
     }
 
     /**
-     * 获取或创建 Session 中的私钥映射表
+     * 创建一个新的并发安全的私钥映射表
+     * 供 starter 在 HttpSession 首次初始化时使用
+     *
+     * @return 新的 ConcurrentHashMap 实例
      */
-    @SuppressWarnings("unchecked")
-    private static Map<String, PrivateKey> getKeyMap(HttpSession session) {
-        Map<String, PrivateKey> keyMap = (Map<String, PrivateKey>) session.getAttribute(SESSION_RSA_KEY_MAP);
-        if (keyMap == null) {
-            keyMap = new ConcurrentHashMap<>();
-            session.setAttribute(SESSION_RSA_KEY_MAP, keyMap);
-        }
-        return keyMap;
+    public static Map<String, PrivateKey> newKeyMap() {
+        return new ConcurrentHashMap<>();
     }
 }

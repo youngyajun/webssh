@@ -3,6 +3,7 @@ package com.webssh.config;
 import com.webssh.controller.WebSshAuthController;
 import com.webssh.controller.WebSshFileController;
 import com.webssh.controller.WebSshPageController;
+import com.webssh.security.ClientIpExtractor;
 import com.webssh.security.LoginAttemptService;
 import com.webssh.security.WebSshAuthInterceptor;
 import com.webssh.ssh.LocalPtyService;
@@ -43,6 +44,7 @@ import java.util.Set;
         WebSshFileController.class,
         LocalPtyService.class,
         LoginAttemptService.class,
+        ClientIpExtractor.class,
         WebSshWebSocketConfig.class
 })
 public class WebSshAutoConfiguration {

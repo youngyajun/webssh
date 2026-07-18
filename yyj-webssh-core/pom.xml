@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.youngyajun</groupId>
+        <artifactId>webssh</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>yyj-webssh-core</artifactId>
+    <packaging>jar</packaging>
+
+    <name>yyj-webssh-core</name>
+    <description>
+        WebSSH Core - 与 Servlet API 解耦的核心服务层
+        包含 SSH/PTY/本地文件服务等 servlet-free 的业务类，
+        可被不同版本的 starter（2.x/3.x/4.x）共享复用。
+    </description>
+
+    <!--
+        多版本适配关键点：
+        1. spring-boot.version 覆盖为 2.3.12.RELEASE（最低支持版本），
+           编译产物字节码与方法签名兼容 2.3.x ~ 4.0.x 的运行时。
+        2. spring 相关依赖统一 provided 作用域，由 consuming starter 提供实际版本。
+        3. jsch/pty4j 是与 Spring 无关的独立库，core 直接打包，starter 传递依赖即可。
+    -->
+    <properties>
+        <java.version>8</java.version>
+        <spring-boot.version>2.3.12.RELEASE</spring-boot.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot 基础（@ConfigurationProperties / @ConditionalOnProperty 等）-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Spring WebSocket：WebSocketSession / BinaryMessage / TextMessage -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- SLF4J：显式声明，避免 provided 传递依赖在不同 Spring Boot 版本下解析不一致 -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- JSch：SSH 客户端，core 直接打包 -->
+        <dependency>
+            <groupId>com.github.mwiede</groupId>
+            <artifactId>jsch</artifactId>
+            <version>${jsch.version}</version>
+        </dependency>
+
+        <!-- pty4j：本地 PTY 终端（type=local 主机）-->
+        <dependency>
+            <groupId>org.jetbrains.pty4j</groupId>
+            <artifactId>pty4j</artifactId>
+            <version>${pty4j.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <!-- 源码包、Javadoc、GPG 签名、中央仓库发布插件均从父 POM 继承，无需重复声明 -->
+        </plugins>
+    </build>
+
+</project>

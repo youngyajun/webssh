@@ -20,6 +20,13 @@
     </description>
 
     <dependencies>
+        <!-- WebSSH Core：servlet-free 的核心服务层（SSH/PTY/本地文件/RSA/登录限制）-->
+        <!-- 传递依赖 jsch、pty4j、spring-websocket（provided）-->
+        <dependency>
+            <groupId>io.github.youngyajun</groupId>
+            <artifactId>yyj-webssh-core</artifactId>
+        </dependency>
+
         <!-- Spring Boot 自动配置 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -45,20 +52,6 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- JSch SSH 客户端 -->
-        <dependency>
-            <groupId>com.github.mwiede</groupId>
-            <artifactId>jsch</artifactId>
-            <version>${jsch.version}</version>
-        </dependency>
-
-        <!-- pty4j：本地 PTY 终端（用于 type=local 主机，启动本地 shell 而非 SSH） -->
-        <dependency>
-            <groupId>org.jetbrains.pty4j</groupId>
-            <artifactId>pty4j</artifactId>
-            <version>${pty4j.version}</version>
-        </dependency>
-
     </dependencies>
 
     <build>
@@ -67,7 +60,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
             </plugin>
-            <!-- 源码包、Javadoc、GPG 签名、中央仓库发布插件均从父 POM 继承，无需重复声明 -->
         </plugins>
     </build>
 

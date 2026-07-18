@@ -1,7 +1,6 @@
 package com.webssh.security;
 
 import com.webssh.config.WebSshProperties;
-import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +12,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 登录尝试限制服务
  * 基于 IP 统计登录失败次数，超过阈值后锁定一段时间，防止密码被暴力破解
+ *
+ * <p>多版本适配说明：
+ * 本类位于 servlet-free 的 core 模块，不依赖 HttpServletRequest。
+ * 客户端 IP 的提取（含 X-Forwarded-For 解析）由调用方（各版本 starter）负责，
+ * 见 starter 的 ClientIpExtractor。</p>
  *
  * @author webssh
  */
@@ -116,40 +120,6 @@ public class LoginAttemptService {
      */
     public void recordSuccess(String ip) {
         attemptMap.remove(ip);
-    }
-
-    /**
-     * 从请求中提取客户端真实 IP
-     * 默认直接使用 request.getRemoteAddr()，不信任 X-Forwarded-For 等转发头，
-     * 防止攻击者伪造头绕过 IP 锁定。
-     * 仅当 webssh.login-security.trust-forwarded-for=true 时才读取转发头
-     * （适用于确信前端有受信反向代理且需要透传真实客户端 IP 的部署场景）
-     */
-    public String getClientIp(HttpServletRequest request) {
-        if (properties.getLoginSecurity().isTrustForwardedFor()) {
-            String ip = request.getHeader("X-Forwarded-For");
-            if (ip != null && !ip.isEmpty() && !"unknown".equalsIgnoreCase(ip)) {
-                // X-Forwarded-For 可能包含多个 IP，取第一个（最原始客户端）
-                int comma = ip.indexOf(',');
-                if (comma > 0) {
-                    ip = ip.substring(0, comma);
-                }
-                return ip.trim();
-            }
-            ip = request.getHeader("X-Real-IP");
-            if (ip != null && !ip.isEmpty() && !"unknown".equalsIgnoreCase(ip)) {
-                return ip.trim();
-            }
-            ip = request.getHeader("Proxy-Client-IP");
-            if (ip != null && !ip.isEmpty() && !"unknown".equalsIgnoreCase(ip)) {
-                return ip.trim();
-            }
-            ip = request.getHeader("WL-Proxy-Client-IP");
-            if (ip != null && !ip.isEmpty() && !"unknown".equalsIgnoreCase(ip)) {
-                return ip.trim();
-            }
-        }
-        return request.getRemoteAddr();
     }
 
     private boolean isEnabled() {

@@ -1,8 +1,10 @@
 package com.webssh.controller;
 
 import com.webssh.config.WebSshProperties;
+import com.webssh.security.ClientIpExtractor;
 import com.webssh.security.LoginAttemptService;
 import com.webssh.ssh.SshService;
+import com.webssh.util.RsaSessionHelper;
 import com.webssh.util.RsaUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -35,6 +37,9 @@ public class WebSshAuthController {
     @Autowired
     private LoginAttemptService loginAttemptService;
 
+    @Autowired
+    private ClientIpExtractor clientIpExtractor;
+
     /**
      * 获取 RSA 公钥
      * 每次请求生成新的密钥对，私钥以 keyId 为索引存入 Session，公钥和 keyId 返回前端用于加密密码
@@ -46,13 +51,13 @@ public class WebSshAuthController {
         try {
             KeyPair keyPair = RsaUtil.generateKeyPair();
             // 私钥存入 Session 映射表，返回 keyId 供前端回传
-            String keyId = RsaUtil.storePrivateKey(session, keyPair.getPrivate());
+            String keyId = RsaSessionHelper.storePrivateKey(session, keyPair.getPrivate());
             String publicKeyBase64 = RsaUtil.getPublicKeyBase64(keyPair.getPublic());
             result.put("code", 200);
             result.put("publicKey", publicKeyBase64);
             result.put("keyId", keyId);
             // 附带登录锁定状态
-            String clientIp = loginAttemptService.getClientIp(request);
+            String clientIp = clientIpExtractor.extract(request);
             LoginAttemptService.LockStatus status = loginAttemptService.checkLocked(clientIp);
             result.put("locked", status.isLocked());
             if (status.isLocked()) {
@@ -74,7 +79,7 @@ public class WebSshAuthController {
     public Map<String, Object> login(@RequestBody Map<String, String> params, HttpSession session,
                                      HttpServletRequest request) {
         Map<String, Object> result = new HashMap<>();
-        String clientIp = loginAttemptService.getClientIp(request);
+        String clientIp = clientIpExtractor.extract(request);
 
         // 先检查该 IP 是否已被锁定
         LoginAttemptService.LockStatus lockStatus = loginAttemptService.checkLocked(clientIp);
@@ -98,7 +103,7 @@ public class WebSshAuthController {
         // 使用 keyId 从 Session 映射表中取出私钥解密密码（一次性使用）
         String password;
         try {
-            password = RsaUtil.decryptWithSessionKey(session, encryptedPassword, keyId);
+            password = RsaSessionHelper.decryptWithSessionKey(session, encryptedPassword, keyId);
         } catch (Exception e) {
             log.warn("密码解密失败", e);
             result.put("code", 401);

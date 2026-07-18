@@ -2,7 +2,7 @@ package com.webssh.websocket;
 
 import com.webssh.config.WebSshProperties;
 import com.webssh.ssh.LocalPtyService;
-import com.webssh.util.RsaUtil;
+import com.webssh.util.RsaSessionHelper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
@@ -127,7 +127,7 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
                     String keyId = servletRequest.getParameter("keyId");
                     if (encryptedPassword != null && !encryptedPassword.isEmpty()) {
                         try {
-                            String password = RsaUtil.decryptWithSessionKey(httpSession, encryptedPassword, keyId);
+                            String password = RsaSessionHelper.decryptWithSessionKey(httpSession, encryptedPassword, keyId);
                             if (password != null) {
                                 attributes.put("sshPassword", password);
                             }
