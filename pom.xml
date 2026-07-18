@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.yyj</groupId>
+    <groupId>io.github.youngyajun</groupId>
     <artifactId>webssh</artifactId>
     <version>1.0.0</version>
     <packaging>pom</packaging>
@@ -13,6 +13,30 @@
     <description>
         WebSSH 多模块项目 - 包含 Starter 和 Web 应用
     </description>
+    <url>https://github.com/youngyajun/webssh</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <connection>scm:git:git://github.com/youngyajun/webssh.git</connection>
+        <developerConnection>scm:git:ssh://github.com/youngyajun/webssh.git</developerConnection>
+        <url>https://github.com/youngyajun/webssh</url>
+    </scm>
+
+    <developers>
+        <developer>
+            <id>youngyajun</id>
+            <name>youngyajun</name>
+            <email>youngyajun@qq.com</email>
+            <url>https://github.com/youngyajun</url>
+        </developer>
+    </developers>
 
     <modules>
         <module>yyj-webssh-spring-boot-starter</module>
@@ -42,7 +66,7 @@
 
             <!-- WebSSH Starter -->
             <dependency>
-                <groupId>com.yyj</groupId>
+                <groupId>io.github.youngyajun</groupId>
                 <artifactId>yyj-webssh-spring-boot-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -68,51 +92,91 @@
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
                 </plugin>
+                <!-- 源码包插件（中央仓库要求） -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>3.3.1</version>
+                    <executions>
+                        <execution>
+                            <id>attach-sources</id>
+                            <goals>
+                                <goal>jar-no-fork</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <!-- Javadoc 包插件（中央仓库要求） -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>3.11.2</version>
+                    <configuration>
+                        <doclint>none</doclint>
+                        <charset>UTF-8</charset>
+                        <encoding>UTF-8</encoding>
+                        <docencoding>UTF-8</docencoding>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>attach-javadocs</id>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <!-- GPG 签名插件（中央仓库要求） -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-gpg-plugin</artifactId>
+                    <version>3.2.8</version>
+                    <executions>
+                        <execution>
+                            <id>sign-artifacts</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>sign</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <!-- Sonatype 中央仓库发布插件 -->
+                <plugin>
+                    <groupId>org.sonatype.central</groupId>
+                    <artifactId>central-publishing-maven-plugin</artifactId>
+                    <version>0.11.0</version>
+                    <extensions>true</extensions>
+                    <configuration>
+                        <publishingServerId>central</publishingServerId>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
+
+        <!-- 直接激活的插件：对所有子模块生效 -->
+        <plugins>
+            <!-- 源码包（pom 类型模块会自动跳过，无源码可打包） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+            </plugin>
+            <!-- Javadoc 包（pom 类型模块会自动跳过） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+            </plugin>
+            <!-- GPG 签名（对所有制品签名，包括 pom 类型的父 POM） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+            </plugin>
+            <!-- Sonatype 中央仓库发布：接管 deploy 生命周期，替代默认的 maven-deploy-plugin -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
     </build>
-
-    <repositories>
-        <repository>
-            <id>public</id>
-            <name>aliyun nexus</name>
-            <url>https://maven.aliyun.com/repository/public</url>
-            <releases>
-                <enabled>true</enabled>
-            </releases>
-        </repository>
-        <!-- Maven Central 直连（id 非 central，不被 settings.xml 中的 mirror 拦截），
-             用于阿里云镜像缺失的制品回源下载 -->
-        <repository>
-            <id>maven-central-direct</id>
-            <name>Maven Central</name>
-            <url>https://repo1.maven.org/maven2/</url>
-            <releases>
-                <enabled>true</enabled>
-            </releases>
-        </repository>
-    </repositories>
-
-    <pluginRepositories>
-        <pluginRepository>
-            <id>public</id>
-            <name>aliyun nexus</name>
-            <url>https://maven.aliyun.com/repository/public</url>
-            <releases>
-                <enabled>true</enabled>
-            </releases>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </pluginRepository>
-        <pluginRepository>
-            <id>maven-central-direct</id>
-            <name>Maven Central</name>
-            <url>https://repo1.maven.org/maven2/</url>
-            <releases>
-                <enabled>true</enabled>
-            </releases>
-        </pluginRepository>
-    </pluginRepositories>
 
 </project>

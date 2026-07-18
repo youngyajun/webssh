@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.yyj</groupId>
+        <groupId>io.github.youngyajun</groupId>
         <artifactId>webssh</artifactId>
         <version>1.0.0</version>
         <relativePath>../pom.xml</relativePath>
@@ -19,10 +19,19 @@
         WebSSH Web 应用 - 使用 webssh-spring-boot-starter 的 Spring Boot 应用
     </description>
 
+    <properties>
+        <!-- 示例应用不发布到中央仓库（fat jar 不适合发布） -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <!-- 跳过发布相关插件，避免生成无用制品 -->
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
+
     <dependencies>
         <!-- WebSSH Starter -->
         <dependency>
-            <groupId>com.yyj</groupId>
+            <groupId>io.github.youngyajun</groupId>
             <artifactId>yyj-webssh-spring-boot-starter</artifactId>
         </dependency>
     </dependencies>
@@ -42,6 +51,18 @@
                         <goals>
                             <goal>repackage</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- 禁用中央仓库发布（示例应用不发布，fat jar 不适合发布到中央仓库） -->
+            <!-- 通过将 phase 设为 none，彻底禁用 extensions 注入的 central-publishing 执行 -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>injected-central-publishing</id>
+                        <phase>none</phase>
                     </execution>
                 </executions>
             </plugin>

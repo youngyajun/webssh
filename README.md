@@ -93,7 +93,7 @@ java -jar webssh-app/target/webssh-app.jar
 <dependencyManagement>
     <dependencies>
         <dependency>
-            <groupId>com.yyj</groupId>
+            <groupId>io.github.youngyajun</groupId>
             <artifactId>yyj-webssh-spring-boot-starter</artifactId>
             <version>1.0.0</version>
         </dependency>
@@ -105,7 +105,7 @@ java -jar webssh-app/target/webssh-app.jar
 
 ```xml
 <dependency>
-    <groupId>com.yyj</groupId>
+    <groupId>io.github.youngyajun</groupId>
     <artifactId>yyj-webssh-spring-boot-starter</artifactId>
 </dependency>
 ```

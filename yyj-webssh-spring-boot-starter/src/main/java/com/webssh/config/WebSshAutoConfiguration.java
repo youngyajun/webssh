@@ -1,18 +1,25 @@
 package com.webssh.config;
 
+import com.webssh.controller.WebSshAuthController;
+import com.webssh.controller.WebSshFileController;
+import com.webssh.controller.WebSshPageController;
+import com.webssh.security.LoginAttemptService;
 import com.webssh.security.WebSshAuthInterceptor;
+import com.webssh.ssh.LocalPtyService;
 import com.webssh.ssh.SshConnectionFactory;
 import com.webssh.ssh.SshService;
 import com.webssh.ssh.SshSessionHolder;
+import com.webssh.websocket.WebSshWebSocketConfig;
 import com.webssh.websocket.WebSshWebSocketHandler;
+
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -30,7 +37,14 @@ import java.util.Set;
 @Configuration
 @EnableConfigurationProperties(WebSshProperties.class)
 @ConditionalOnProperty(prefix = "webssh", name = "enabled", havingValue = "true", matchIfMissing = true)
-@ComponentScan(basePackages = "com.webssh")
+@Import({
+        WebSshAuthController.class,
+        WebSshPageController.class,
+        WebSshFileController.class,
+        LocalPtyService.class,
+        LoginAttemptService.class,
+        WebSshWebSocketConfig.class
+})
 public class WebSshAutoConfiguration {
     private static final Logger log = LoggerFactory.getLogger(WebSshAutoConfiguration.class);
 
