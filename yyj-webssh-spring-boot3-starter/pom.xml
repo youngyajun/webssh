@@ -12,7 +12,7 @@
     </parent>
 
     <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
-    <version>${yyj-webssh-spring-boot3-starter.version}</version>
+    <version>3.0.0</version>
     <packaging>jar</packaging>
 
     <name>yyj-webssh-spring-boot3-starter</name>

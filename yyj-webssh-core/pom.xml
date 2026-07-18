@@ -12,6 +12,7 @@
     </parent>
 
     <artifactId>yyj-webssh-core</artifactId>
+    <version>1.0.1</version>
     <packaging>jar</packaging>
 
     <name>yyj-webssh-core</name>
