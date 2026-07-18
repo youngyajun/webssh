@@ -674,36 +674,26 @@ location ^~ /myapp/ {
 
 部署后访问 `https://example.com/webssh/login.html`：
 
-- 登录页能打开 → 静态资源 location 正常
-- 登录成功 → auth API 反代正常
+- 登录页能打开 → 静态资源 `location` 正常
+- 登录成功 → `auth API` 反代正常
 - 打开终端能连 SSH → WebSocket 升级头配置正确
-- rz/sz 传大文件不断 → `proxy_read_timeout 3600s` 生效
+- `rz`/`sz` 传大文件不断 → `proxy_read_timeout 3600s` 生效
 
 # 7. WebSSH相关项目推荐
 
-Guacamole：[https://github.com/apache/guacamole-server](https://github.com/apache/guacamole-server)
+**Guacamole**：[https://github.com/apache/guacamole-server](https://github.com/apache/guacamole-server)
 
-ttyd：[https://github.com/tsl0922/ttyd](https://github.com/tsl0922/ttyd)
+**ttyd**：[https://github.com/tsl0922/ttyd](https://github.com/tsl0922/ttyd)
 
 # 8. 致谢
 
 本项目站在以下优秀开源项目的肩膀上，衷心感谢它们的作者与社区：
 
-**后端**
-
-- [Spring Boot](https://spring.io/projects/spring-boot) — 应用框架、自动配置与 WebSocket 支持
-- [JSch](https://github.com/mwiede/jsch) — SSH 协议客户端（mwiede 维护的活跃 fork）
+- [JSch](https://github.com/mwiede/jsch) — SSH 协议客户端
 - [pty4j](https://github.com/JetBrains/pty4j) — 本地 PTY 终端支持（JetBrains 开源）
 
-**前端**
-
 - [xterm.js](https://github.com/xtermjs/xterm.js) — 浏览器端终端模拟器
-- [xterm-addon-fit](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit) — xterm 尺寸自适应插件
-- [zmodem.js](https://github.com/kuasha/zmodem.js) — ZMODEM 协议实现（rz/sz 文件传输）
+- [zmodem.js](https://github.com/FGasper/zmodemjs) — ZMODEM 协议实现（rz/sz 文件传输）
 - [JSEncrypt](https://github.com/travist/jsencrypt) — RSA 加密库（登录密码传输加密）
-
-**构建工具**
-
-- [Apache Maven](https://maven.apache.org/) — 项目构建与依赖管理
 
 感谢所有为开源社区贡献力量的人。
