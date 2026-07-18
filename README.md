@@ -145,7 +145,7 @@ java -jar webssh-app/target/webssh-app.jar
         <dependency>
             <groupId>io.github.youngyajun</groupId>
             <artifactId>yyj-webssh-core</artifactId>
-            <version>1.0.0</version>
+            <version>1.0.1</version>
         </dependency>
         <!-- WebSSH Spring Boot 3.x/4.x Starter（必选） -->
         <dependency>
@@ -179,7 +179,7 @@ java -jar webssh-app/target/webssh-app.jar
         <dependency>
             <groupId>io.github.youngyajun</groupId>
             <artifactId>yyj-webssh-core</artifactId>
-            <version>1.0.0</version>
+            <version>1.0.1</version>
         </dependency>
         <!-- WebSSH Spring Boot 2.x Starter（必选） -->
         <dependency>
@@ -413,7 +413,70 @@ spring:
 4. **反代场景注意 IP 识别**：使用 Nginx 时设置 `trust-forwarded-for: true` 以识别真实客户端 IP
 5. **使用 HTTPS**：通过反向代理启用 TLS，保护 WebSocket 和登录凭据传输
 
-## 5.4 API 接口
+## 5.4 集成 Spring Security（可选）
+
+如果接入项目已启用 `Spring Security`，`WebSSH` 的页面、认证接口、文件管理 API、`WebSocket` 通道都会被 Security 拦截，需要显式放行。最简单的做法是将整个 `webssh.context-path`（默认 `/webssh`）下的所有路径全部 `permitAll()`。
+
+> **说明**：WebSSH Starter 内部已自带登录鉴权（基于 `webssh.username` / `webssh.password` + RSA 加密 + IP 锁定 + 登录失败计数）。放行后 WebSSH 仍会走自身登录流程，不会"裸奔"。无需在 Spring Security 侧重复鉴权。
+
+### 5.4.1 Spring Boot 2.x（Spring Security 5.x，`javax`）
+
+```java
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http
+            .authorizeRequests()
+                .antMatchers("/webssh/**").permitAll()
+                .anyRequest().authenticated()
+                .and()
+            // 关闭 CSRF，否则登录 POST /webssh/auth/login 会被拦截返回 403
+            .csrf().disable();
+    }
+}
+```
+
+### 5.4.2 Spring Boot 3.x / 4.x（Spring Security 6.x，`jakarta`）
+
+Spring Security 6 已移除 `WebSecurityConfigurerAdapter`，改用 `SecurityFilterChain` Bean：
+
+```java
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/webssh/**").permitAll()
+                .anyRequest().authenticated()
+            )
+            // 关闭 CSRF，否则登录 POST /webssh/auth/login 会被拦截返回 403
+            .csrf(csrf -> csrf.disable());
+        return http.build();
+    }
+}
+```
+
+### 5.4.3 注意事项
+
+1. **CSRF 必须关闭或针对 `/webssh/**` 排除**：WebSSH 登录走 `POST /webssh/auth/login`，开启 CSRF 后会被拦截返回 403
+2. **`context-path` 自定义**：若通过 `webssh.context-path` 修改了前缀（如 `/myapp/webssh`），需将上例中的 `/webssh/**` 同步替换
+3. **子路径部署**：与 [6.5 子路径部署场景](#65-子路径部署场景) 配合使用时，路径前缀需对齐
+4. **WebSocket 与 Spring Security**：`/webssh/ws` 走 HTTP 升级握手，按上方规则放行即可，无需额外处理；若项目对 WS 有特殊鉴权过滤器，需单独排除
+5. **会话冲突**：WebSSH 内部使用 `HttpSession` 存储登录态与 RSA 私钥（一次性使用）。若接入项目也使用 Spring Session / Session 共享，请确保 `webssh.*` 相关 session attribute 不会被外部逻辑误清理
+
+## 5.5 API 接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
