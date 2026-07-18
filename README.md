@@ -170,7 +170,7 @@ java -jar webssh-app/target/webssh-app.jar
 </dependencies>
 ```
 
-若是 Spring Boot 2.x 项目，将 starter 的 artifactId 替换为 `yyj-webssh-spring-boot2-starter`，版本号改为 `2.0.0`，core 保持不变：
+若是 Spring Boot 2.x 项目，将`starter`的`artifactId`替换为 `yyj-webssh-spring-boot2-starter`，版本号改为 `2.0.0`，`core`保持不变：
 
 ```xml
 <dependencyManagement>
@@ -206,8 +206,6 @@ java -jar webssh-app/target/webssh-app.jar
 
 > **依赖说明**：
 > - `yyj-webssh-core` 与 `yyj-webssh-spring-boot*-starter` 必须同时引入，二者缺一不可
-> - Starter 会自动传递 `spring-boot-starter-web`、`spring-boot-starter-websocket`，无需重复声明
-> - `spring-boot-configuration-processor` 已在 starter 中标记为 `optional`，不会传递到最终项目
 
 **步骤三：配置 `application-webssh.yml`**
 
@@ -247,6 +245,8 @@ webssh:
   host-key-verification: no
   # known_hosts 路径（host-key-verification=yes 时使用）
   # known-hosts: ~/.ssh/known_hosts
+
+
   # ============================================================================
   # WebSSH 管理界面登录账号配置（单账号与多账号可共存，用户名冲突时以多账号为准）
   # ----------------------------------------------------------------------------
@@ -286,22 +286,26 @@ webssh:
 
   # SSH 主机列表
   hosts:
-    - name: 【本地内网-192.168.1.166】
+    # username&password 模式
+    - name: 【192.168.1.166】
       host: 192.168.1.166
       port: 22
       # 可以不配置username&password，登录后在界面手动输入
       username:
       password:
 
-    - name: 【测试服务器】
-      host: 192.168.1.166
-      port: 22
-      # === （username&password）和 （privateKey&passphrase）可以二选一 ===
-      # username: root									# 可以不配置username，登录后在界面手动输入
-      # password: ssh-password							# 可以不配置password，登录后在界面手动输入
+    # privateKey&passphrase 模式
+#    - name: 【xxx】
+#      host: xxx.xxx.xxx.xxx
+#      port: 22
+#      privateKey: /path/to/id_rsa
+#      passphrase: private-key-password
 
-      # privateKey: /path/to/id_rsa
-      # passphrase: private-key-password
+    # 本地PTY模式示例：webssh与目标机同机部署时，直接启动本地 shell，无需SSH凭据
+    # 仅支持 Linux/Mac等类Unix系统（Windows 暂不支持，将报错）
+#    - name: 【本机-PTY直连】
+#      host: localhost
+#      type: local
 
   # 高风险命令正则列表（命中任意一条则拒绝通过终端执行）
   high-risk-commands:
@@ -312,15 +316,19 @@ webssh:
     - '>\s*/dev/sd[a-z]'                                # > /dev/sda (覆盖磁盘)
     - 'dd\s+if=.*of=/dev/'                              # dd 直接写磁盘
     - 'mkfs\.'                                          # mkfs.*    (格式化文件系统)
+
+
     # === 权限失控 ===
-    - '^chmod\s+-R\s+777\s+/'                           # chmod -R 777 / (开放所有权限)
-    - '^chown\s+-R\s+\w+:\w+\s+/'                       # chown -R 递归改所有者
+#    - '^chmod\s+-R\s+777\s+/'                           # chmod -R 777 / (开放所有权限)
+#    - '^chown\s+-R\s+\w+:\w+\s+/'                       # chown -R 递归改所有者
+
     # === 系统关机/重启 ===
     - '^shutdown'                                       # shutdown
-    - '^reboot'                                         # reboot
-    - '^halt'                                           # halt
-    - '^poweroff'                                       # poweroff
-    - '^init\s+[06]'                                    # init 0 / init 6
+#    - '^reboot'                                         # reboot
+#    - '^halt'                                           # halt
+#    - '^poweroff'                                       # poweroff
+#    - '^init\s+[06]'                                    # init 0 / init 6
+
     # === 进程与磁盘 ===
     - 'fdisk\s+/dev/'                                   # fdisk 磁盘分区
     - 'parted\s+/dev/'                                  # parted 磁盘分区
