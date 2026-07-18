@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
@@ -317,6 +318,13 @@ public class LocalPtyService {
             } else {
                 break;
             }
+        }
+        // read 返回 -1：本地 PTY 进程已退出（如用户输入 exit/logout）。
+        // 关闭 WebSocket，使用自定义关闭码 4000 标识"shell 正常退出"，
+        // 前端 onclose 据此跳过自动重连（与 xshell 行为一致）。
+        // 通过 decorator.close() 关闭可确保已排队的终端输出先发送给前端。
+        if (asyncSession.isOpen()) {
+            asyncSession.close(new CloseStatus(4000, "shell-exited"));
         }
     }
 

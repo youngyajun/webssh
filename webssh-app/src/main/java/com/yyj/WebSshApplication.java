@@ -52,8 +52,6 @@ public class WebSshApplication {
             log.warn("构造 WebSSH 访问地址失败，回退到 localhost：{}", e.getMessage());
             url = "http://127.0.0.1:8080/webssh/login.html";
         }
-        log.info("WebSSH 访问地址：{}", url);
-
         // 2. 打开浏览器
         browse(url);
     }

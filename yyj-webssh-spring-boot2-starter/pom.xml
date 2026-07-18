@@ -11,14 +11,13 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>yyj-webssh-core</artifactId>
+    <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
+    <version>${yyj-webssh-spring-boot2-starter.version}</version>
     <packaging>jar</packaging>
 
-    <name>yyj-webssh-core</name>
+    <name>yyj-webssh-spring-boot2-starter</name>
     <description>
-        WebSSH Core - 与 Servlet API 解耦的核心服务层
-        包含 SSH/PTY/本地文件服务等 servlet-free 的业务类，
-        可被不同版本的 starter（2.x/3.x/4.x）共享复用。
+        WebSSH Spring Boot Starter (2.x) - 适配 Spring Boot 2.3 ~ 2.7（javax.servlet + spring.factories）
     </description>
     <url>https://github.com/youngyajun/webssh</url>
 
@@ -46,11 +45,13 @@
     </developers>
 
     <!--
-        多版本适配关键点：
-        1. spring-boot.version 覆盖为 2.3.12.RELEASE（最低支持版本），
-           编译产物字节码与方法签名兼容 2.3.x ~ 4.0.x 的运行时。
-        2. spring 相关依赖统一 provided 作用域，由 consuming starter 提供实际版本。
-        3. jsch/pty4j 是与 Spring 无关的独立库，core 直接打包，starter 传递依赖即可。
+        spring-boot2-starter 编译基线：SB 2.3.12.RELEASE + Java 8
+        - 编译时使用最低 2.x 版本，确保 API 兼容 SB 2.3 ~ 2.7
+        - 运行时由 consuming 项目通过自身 BOM 提供实际 SB 版本
+        - javax.servlet + spring.factories 适配 SB 2.x 全系列
+        - Java 8 字节码前向兼容 SB 2.7（Java 17 运行时）
+        - 覆盖父 POM 的 java.version=21 / spring-boot.version=4.0.6
+          （父 POM 属性仍服务于 webssh-app 模块与 spring-boot3-starter）
     -->
     <properties>
         <java.version>8</java.version>
@@ -58,39 +59,36 @@
     </properties>
 
     <dependencies>
-        <!-- Spring Boot 基础（@ConfigurationProperties / @ConditionalOnProperty 等）-->
+        <!-- WebSSH Core：servlet-free 的核心服务层（SSH/PTY/本地文件/RSA/登录限制）-->
+        <!-- 传递依赖 jsch、pty4j、spring-websocket（provided）-->
+        <dependency>
+            <groupId>io.github.youngyajun</groupId>
+            <artifactId>yyj-webssh-core</artifactId>
+        </dependency>
+
+        <!-- Spring Boot 自动配置 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
-            <scope>provided</scope>
         </dependency>
 
-        <!-- Spring WebSocket：WebSocketSession / BinaryMessage / TextMessage -->
+        <!-- Spring Boot Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Boot WebSocket -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-websocket</artifactId>
-            <scope>provided</scope>
         </dependency>
 
-        <!-- SLF4J：显式声明，避免 provided 传递依赖在不同 Spring Boot 版本下解析不一致 -->
+        <!-- Spring Boot 配置处理器（生成配置元数据） -->
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- JSch：SSH 客户端，core 直接打包 -->
-        <dependency>
-            <groupId>com.github.mwiede</groupId>
-            <artifactId>jsch</artifactId>
-            <version>${jsch.version}</version>
-        </dependency>
-
-        <!-- pty4j：本地 PTY 终端（type=local 主机）-->
-        <dependency>
-            <groupId>org.jetbrains.pty4j</groupId>
-            <artifactId>pty4j</artifactId>
-            <version>${pty4j.version}</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
         </dependency>
     </dependencies>
 
@@ -100,7 +98,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
             </plugin>
-            <!-- 源码包、Javadoc、GPG 签名、中央仓库发布插件均从父 POM 继承，无需重复声明 -->
         </plugins>
     </build>
 

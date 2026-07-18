@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.youngyajun</groupId>
+        <artifactId>webssh</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
+    <version>${yyj-webssh-spring-boot3-starter.version}</version>
+    <packaging>jar</packaging>
+
+    <name>yyj-webssh-spring-boot3-starter</name>
+    <description>
+        WebSSH Spring Boot Starter (3.x/4.x) - 适配 Spring Boot 3.0 ~ 4.0（jakarta.servlet + AutoConfiguration.imports）
+    </description>
+    <url>https://github.com/youngyajun/webssh</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <connection>scm:git:git://github.com/youngyajun/webssh.git</connection>
+        <developerConnection>scm:git:ssh://github.com/youngyajun/webssh.git</developerConnection>
+        <url>https://github.com/youngyajun/webssh</url>
+    </scm>
+
+    <developers>
+        <developer>
+            <id>youngyajun</id>
+            <name>youngyajun</name>
+            <email>youngyajun@qq.com</email>
+            <url>https://github.com/youngyajun</url>
+        </developer>
+    </developers>
+
+    <!--
+        spring-boot3-starter 编译基线：SB 3.0.12 + Java 17
+        - 编译时使用最低 3.x 版本，确保 API 兼容 SB 3.0 ~ 4.0
+        - 运行时由 consuming 项目通过自身 BOM 提供实际 SB 版本
+        - jakarta.servlet + AutoConfiguration.imports 适配 SB 3.x/4.x
+        - Java 17 字节码兼容 SB 3.0+（最低要求 Java 17）
+        - 覆盖父 POM 的 java.version=21 / spring-boot.version=4.0.6
+          （父 POM 属性仍服务于 webssh-app 模块；webssh-app 基于 SB 4.0.6 + Java 21）
+    -->
+    <properties>
+        <java.version>17</java.version>
+        <spring-boot.version>3.0.12</spring-boot.version>
+    </properties>
+
+    <dependencies>
+        <!-- WebSSH Core：servlet-free 的核心服务层（SSH/PTY/本地文件/RSA/登录限制）-->
+        <!-- 传递依赖 jsch、pty4j、spring-websocket（provided）-->
+        <dependency>
+            <groupId>io.github.youngyajun</groupId>
+            <artifactId>yyj-webssh-core</artifactId>
+        </dependency>
+
+        <!-- Spring Boot 自动配置 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Boot WebSocket -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+
+        <!-- Spring Boot 配置处理器（生成配置元数据） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSSH - 登录</title>
+    <link rel="icon" type="image/svg+xml" href="images/terminal.svg">
+    <link rel="stylesheet" href="style/login.css">
+</head>
+<body>
+    <!-- JSEncrypt 用于 RSA 加密密码 -->
+    <script src="js/jsencrypt.min.js"></script>
+    <div class="login-container">
+        <!-- 左侧品牌展示 -->
+        <div class="brand-side">
+            <div class="brand-content">
+                <div class="brand-logo">
+                    <img src="images/terminal.png" alt="WebSSH" class="brand-logo-icon">
+                    <h1>WebSSH</h1>
+                </div>
+                <p class="brand-tagline">基于Web的Linux终端管理工具</p>
+            </div>
+        </div>
+        <!-- 右侧登录表单 -->
+        <div class="form-side">
+            <div class="form-header">
+                <h2>欢迎登录</h2>
+            </div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="username" placeholder="请输入用户名" autocomplete="username">
+                        <button type="button" class="clear-btn" data-target="username" aria-label="清除用户名"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18"/></svg></button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <div class="input-wrapper">
+                        <input type="password" id="password" placeholder="请输入密码" autocomplete="current-password">
+                        <button type="button" class="clear-btn" data-target="password" aria-label="清除密码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18"/></svg></button>
+                    </div>
+                </div>
+                <button type="submit" class="btn-login" id="loginBtn">登录</button>
+                <div class="error-message" id="errorMessage"></div>
+                <div class="loading" id="loading">
+                    <span class="spinner"></span> 登录中...
+                </div>
+            </form>
+            <div class="footer">
+                &copy; 2026 WebSSH | youngyajun
+            </div>
+        </div>
+    </div>
+    <script src="js/login.js"></script>
+</body>
+</html>

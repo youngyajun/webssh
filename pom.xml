@@ -29,6 +29,11 @@
         <url>https://github.com/youngyajun/webssh</url>
     </scm>
 
+    <issueManagement>
+        <system>GitHub Issues</system>
+        <url>https://github.com/youngyajun/webssh/issues</url>
+    </issueManagement>
+
     <developers>
         <developer>
             <id>youngyajun</id>
@@ -40,7 +45,8 @@
 
     <modules>
         <module>yyj-webssh-core</module>
-        <module>yyj-webssh-spring-boot-starter</module>
+        <module>yyj-webssh-spring-boot3-starter</module>
+        <module>yyj-webssh-spring-boot2-starter</module>
         <module>webssh-app</module>
     </modules>
 
@@ -51,6 +57,10 @@
         <spring-boot.version>4.0.6</spring-boot.version>
         <jsch.version>2.28.4</jsch.version>
         <pty4j.version>0.13.12</pty4j.version>
+        <!-- 子模块独立版本号：core 沿用父 POM 1.0.0；spring-boot3-starter 以 3 开头；spring-boot2-starter 以 2 开头 -->
+        <yyj-webssh-core.version>1.0.0</yyj-webssh-core.version>
+        <yyj-webssh-spring-boot3-starter.version>3.0.0</yyj-webssh-spring-boot3-starter.version>
+        <yyj-webssh-spring-boot2-starter.version>2.0.0</yyj-webssh-spring-boot2-starter.version>
     </properties>
 
     <!-- 依赖声明 -->
@@ -69,14 +79,21 @@
             <dependency>
                 <groupId>io.github.youngyajun</groupId>
                 <artifactId>yyj-webssh-core</artifactId>
-                <version>${project.version}</version>
+                <version>${yyj-webssh-core.version}</version>
             </dependency>
 
-            <!-- WebSSH Starter -->
+            <!-- WebSSH Starter (3.x/4.x: jakarta.servlet + AutoConfiguration.imports) -->
             <dependency>
                 <groupId>io.github.youngyajun</groupId>
-                <artifactId>yyj-webssh-spring-boot-starter</artifactId>
-                <version>${project.version}</version>
+                <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
+                <version>${yyj-webssh-spring-boot3-starter.version}</version>
+            </dependency>
+
+            <!-- WebSSH Starter 2.x (javax.servlet + spring.factories, 适配 SB 2.3~2.7) -->
+            <dependency>
+                <groupId>io.github.youngyajun</groupId>
+                <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
+                <version>${yyj-webssh-spring-boot2-starter.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

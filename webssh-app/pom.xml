@@ -32,7 +32,7 @@
         <!-- WebSSH Starter -->
         <dependency>
             <groupId>io.github.youngyajun</groupId>
-            <artifactId>yyj-webssh-spring-boot-starter</artifactId>
+            <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
         </dependency>
     </dependencies>
 

@@ -31,35 +31,70 @@
 
 | 层面       | 技术                           |
 | ---------- | ------------------------------ |
-| 后端       | Spring Boot 4.0.x、JDK 21      |
+| 后端       | Spring Boot 2.3.x ~ 4.0.x（多版本适配）|
+| JDK        | Java 8+（2.x starter）/ Java 17+（3.x/4.x starter）|
 | SSH 客户端 | JSch（com.github.mwiede:jsch） |
 | 通信       | WebSocket                      |
 | 前端终端   | xterm.js 5.5.0                 |
 | 构建       | Maven 多模块                   |
 
+### 多版本适配方案
+
+采用 **共享 core + 多 starter** 架构，一套代码支持 Spring Boot 2.3 ~ 4.0 全系列：
+
+```
+Spring Boot 版本    │ 推荐使用                           │ 编译基线
+────────────────────┼──────────────────────────────────┼──────────────────────────
+2.3 ~ 2.7           │ yyj-webssh-spring-boot2-starter  │ SB 2.3.12 + Java 8
+3.0 ~ 3.5           │ yyj-webssh-spring-boot3-starter  │ SB 3.0.12 + Java 17
+4.0                 │ yyj-webssh-spring-boot3-starter  │ SB 3.0.12 + Java 17（前向兼容）
+────────────────────┴──────────────────────────────────┴──────────────────────────
+共享核心           │ yyj-webssh-core                    │ SB 2.3.12 + Java 8（servlet-free）
+```
+
+- **2.x starter**：使用 `javax.servlet` + `spring.factories`，Java 8 字节码
+- **3.x/4.x starter**：使用 `jakarta.servlet` + `AutoConfiguration.imports`，Java 17 字节码
+- **core 模块**：servlet-free，所有版本通用的 SSH/PTY/RSA 业务逻辑
+
+> **版本号策略**：core 的版本号独立于 starter 演进。core 1.0.0 是共享核心的首发版本，被 starter-2x 2.0.0 与 starter-3x 3.0.0 同时依赖，并非"旧版"。starter 版本号首位对应所适配的 Spring Boot 大版本（2.x / 3.x）。
+
 # 3. 项目结构
 
 ```
-webssh/
-├── pom.xml                          # 父 POM（依赖管理）
-├── yyj-webssh-spring-boot-starter/  # Starter 模块（自动装配 + 前端资源）
+webssh/                                                # 父 POM (java=21, sb=4.0.6)
+├── pom.xml                                            # 父 POM（依赖管理）
+├── yyj-webssh-core/                                   # 共享核心（servlet-free, java=8, sb=2.3.12）
+│   └── src/main/java/com/webssh/
+│       ├── config/WebSshProperties.java              # 配置属性类
+│       ├── ssh/                                      # SSH/PTY/本地文件服务（核心业务）
+│       ├── util/RsaUtil.java                         # RSA 工具（servlet-free 版本）
+│       └── security/LoginAttemptService.java          # 登录限制服务（IP 由调用方传入）
+│
+├── yyj-webssh-spring-boot3-starter/                # spring-boot3-starter（SB 3.0~4.0, java=17, sb=3.0.12）
 │   └── src/main/
 │       ├── java/com/webssh/
-│       │   ├── config/              # 自动配置 & 属性类
-│       │   ├── controller/          # 认证、文件管理、页面控制器
-│       │   ├── security/            # 认证拦截器、登录安全策略
-│       │   ├── ssh/                 # SSH 连接工厂、会话管理、服务层
-│       │   ├── util/                # RSA 工具
-│       │   └── websocket/           # WebSocket 配置与处理器
+│       │   ├── config/WebSshAutoConfiguration.java   # 自动配置类
+│       │   ├── controller/                           # 认证、文件管理、页面控制器
+│       │   ├── security/                             # 认证拦截器、ClientIpExtractor
+│       │   ├── util/RsaSessionHelper.java            # RSA 助手（jakarta.servlet 版本）
+│       │   └── websocket/                            # WebSocket 配置与处理器
 │       └── resources/META-INF/
-│           ├── resources/webssh/    # 前端页面（HTML/CSS/JS/xterm）
-│           └── spring/              # AutoConfiguration 注册文件
-└── webssh-app/                      # 示例应用（可直接运行）
+│           ├── resources/webssh/                     # 前端页面（HTML/CSS/JS/xterm）
+│           └── spring/                               # AutoConfiguration.imports
+│
+├── yyj-webssh-spring-boot2-starter/                # spring-boot2-starter（SB 2.3~2.7, java=8, sb=2.3.12）
+│   └── src/main/
+│       ├── java/com/webssh/                          # 与默认 starter 同名同结构（import javax.servlet）
+│       └── resources/META-INF/
+│           ├── resources/webssh/                     # 前端页面（同上）
+│           └── spring.factories                      # SB 2.x 自动装配入口
+│
+└── webssh-app/                                       # 示例应用（SB 4.0.6 + Java 21，可直接运行）
     └── src/main/
-        ├── java/com/yyj/            # 启动类（启动后自动打开浏览器）
+        ├── java/com/yyj/                              # 启动类（启动后自动打开浏览器）
         └── resources/
-            ├── application.yml      # 端口、上传限制等
-            └── application-webssh.yml # WebSSH 配置
+            ├── application.yml                        # 端口、上传限制等
+            └── application-webssh.yml                 # WebSSH 配置
 ```
 
 # 4. 快速开始
@@ -72,8 +107,10 @@ mvn clean install -DskipTests
 ```
 
 构建产物：
-- `yyj-webssh-spring-boot-starter/target/yyj-webssh-spring-boot-starter-1.0.0.jar` — Starter 制品
-- `webssh-app/target/webssh-app.jar` — 可直接运行的示例应用
+- `yyj-webssh-core/target/yyj-webssh-core-1.0.0.jar` — 共享核心制品
+- `yyj-webssh-spring-boot3-starter/target/yyj-webssh-spring-boot3-starter-3.0.0.jar` — spring-boot3-starter 制品（SB 3.x/4.x）
+- `yyj-webssh-spring-boot2-starter/target/yyj-webssh-spring-boot2-starter-2.0.0.jar` — spring-boot2-starter 制品（SB 2.x）
+- `webssh-app/target/webssh-app.jar` — 可直接运行的示例应用（SB 4.0.6）
 
 ## 4.2 运行示例应用
 
@@ -85,34 +122,51 @@ java -jar webssh-app/target/webssh-app.jar
 
 ## 4.3 接入已有 Spring Boot 项目
 
-**步骤一：添加 Maven 依赖**
+**步骤一：根据 Spring Boot 版本选择对应的 starter**
 
-先在项目根 POM（或 `dependencyManagement`）中声明版本：
+| 你的 Spring Boot 版本 | 依赖 artifactId              | JDK 要求 |
+|------------------------|------------------------------|----------|
+| 2.3.x ~ 2.7.x          | `yyj-webssh-spring-boot2-starter` | Java 8+  |
+| 3.0.x ~ 3.5.x          | `yyj-webssh-spring-boot3-starter` | Java 17+ |
+| 4.0.x                  | `yyj-webssh-spring-boot3-starter` | Java 17+ |
+
+> **判断依据**：SB 2.x 使用 `javax.servlet`，SB 3.x/4.x 使用 `jakarta.servlet`，命名空间不同需选用对应 starter。
+
+**步骤二：添加 Maven 依赖**
+
+以 Spring Boot 3.x/4.x 项目为例（默认 starter）：
 
 ```xml
 <dependencyManagement>
     <dependencies>
         <dependency>
             <groupId>io.github.youngyajun</groupId>
-            <artifactId>yyj-webssh-spring-boot-starter</artifactId>
-            <version>1.0.0</version>
+            <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
+            <version>3.0.0</version>
         </dependency>
     </dependencies>
 </dependencyManagement>
+
+<dependencies>
+    <dependency>
+        <groupId>io.github.youngyajun</groupId>
+        <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
+    </dependency>
+</dependencies>
 ```
 
-在子模块 POM 中引入依赖：
+若是 Spring Boot 2.x 项目，将 artifactId 替换为 `yyj-webssh-spring-boot2-starter` 即可：
 
 ```xml
 <dependency>
     <groupId>io.github.youngyajun</groupId>
-    <artifactId>yyj-webssh-spring-boot-starter</artifactId>
+    <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
 </dependency>
 ```
 
-> Starter 已包含 `spring-boot-starter-web` 和 `spring-boot-starter-websocket`，无需重复声明。
+> Starter 会自动传递 `yyj-webssh-core`、`spring-boot-starter-web`、`spring-boot-starter-websocket`，无需重复声明。
 
-**步骤二：配置 `application-webssh.yml`**
+**步骤三：配置 `application-webssh.yml`**
 
 ```yaml
 # WebSSH 配置
@@ -235,7 +289,7 @@ webssh:
     trust-forwarded-for: false 							# 是否信任 X-Forwarded-For（反代场景设为 true）
 ```
 
-**步骤三：引入application-webssh.yml**
+**步骤四：引入application-webssh.yml**
 
 主配置`application.yml`文件引入配置：
 
@@ -247,9 +301,9 @@ spring:
     active: webssh
 ```
 
-**步骤四：启动应用**
+**步骤五：启动应用**
 
-正常启动`Spring Boot`应用即可，Starter 通过 `AutoConfiguration.imports` 自动装配，无需额外注解或配置类。
+正常启动`Spring Boot`应用即可，Starter 会自动装配（默认 starter 通过 `AutoConfiguration.imports`，spring-boot2-starter 通过 `spring.factories`），无需额外注解或配置类。
 
 访问 `http://your-host:port/webssh/login.html`，使用 `webssh.username` / `webssh.password` 登录后选择主机连接。
 
@@ -342,3 +396,25 @@ Guacamole：[https://github.com/apache/guacamole-server](https://github.com/apac
 
 ttyd：[https://github.com/tsl0922/ttyd](https://github.com/tsl0922/ttyd)
 
+# 7. 致谢
+
+本项目站在以下优秀开源项目的肩膀上，衷心感谢它们的作者与社区：
+
+**后端**
+
+- [Spring Boot](https://spring.io/projects/spring-boot) — 应用框架、自动配置与 WebSocket 支持
+- [JSch](https://github.com/mwiede/jsch) — SSH 协议客户端（mwiede 维护的活跃 fork）
+- [pty4j](https://github.com/JetBrains/pty4j) — 本地 PTY 终端支持（JetBrains 开源）
+
+**前端**
+
+- [xterm.js](https://github.com/xtermjs/xterm.js) — 浏览器端终端模拟器
+- [xterm-addon-fit](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit) — xterm 尺寸自适应插件
+- [zmodem.js](https://github.com/kuasha/zmodem.js) — ZMODEM 协议实现（rz/sz 文件传输）
+- [JSEncrypt](https://github.com/travist/jsencrypt) — RSA 加密库（登录密码传输加密）
+
+**构建工具**
+
+- [Apache Maven](https://maven.apache.org/) — 项目构建与依赖管理
+
+感谢所有为开源社区贡献力量的人。
