@@ -134,11 +134,20 @@ java -jar webssh-app/target/webssh-app.jar
 
 **步骤二：添加 Maven 依赖**
 
-以 Spring Boot 3.x/4.x 项目为例（默认 starter）：
+> **必读**：`yyj-webssh-core` 是 WebSSH 的共享核心模块（包含 SSH/PTY/本地文件/RSA/登录限制等业务逻辑），与 starter 是**两个独立版本号**的制品（core 1.0.0、starter-2x 2.0.0、starter-3x 3.0.0）。引入 starter 时**必须同时引入 core**，二者缺一不可。
+
+以 Spring Boot 3.x/4.x 项目为例：
 
 ```xml
 <dependencyManagement>
     <dependencies>
+        <!-- WebSSH 共享核心（必选） -->
+        <dependency>
+            <groupId>io.github.youngyajun</groupId>
+            <artifactId>yyj-webssh-core</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+        <!-- WebSSH Spring Boot 3.x/4.x Starter（必选） -->
         <dependency>
             <groupId>io.github.youngyajun</groupId>
             <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
@@ -148,6 +157,12 @@ java -jar webssh-app/target/webssh-app.jar
 </dependencyManagement>
 
 <dependencies>
+    <!-- WebSSH 共享核心（必选） -->
+    <dependency>
+        <groupId>io.github.youngyajun</groupId>
+        <artifactId>yyj-webssh-core</artifactId>
+    </dependency>
+    <!-- WebSSH Spring Boot 3.x/4.x Starter（必选） -->
     <dependency>
         <groupId>io.github.youngyajun</groupId>
         <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
@@ -155,16 +170,44 @@ java -jar webssh-app/target/webssh-app.jar
 </dependencies>
 ```
 
-若是 Spring Boot 2.x 项目，将 artifactId 替换为 `yyj-webssh-spring-boot2-starter` 即可：
+若是 Spring Boot 2.x 项目，将 starter 的 artifactId 替换为 `yyj-webssh-spring-boot2-starter`，版本号改为 `2.0.0`，core 保持不变：
 
 ```xml
-<dependency>
-    <groupId>io.github.youngyajun</groupId>
-    <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
-</dependency>
+<dependencyManagement>
+    <dependencies>
+        <!-- WebSSH 共享核心（必选） -->
+        <dependency>
+            <groupId>io.github.youngyajun</groupId>
+            <artifactId>yyj-webssh-core</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+        <!-- WebSSH Spring Boot 2.x Starter（必选） -->
+        <dependency>
+            <groupId>io.github.youngyajun</groupId>
+            <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<dependencies>
+    <!-- WebSSH 共享核心（必选） -->
+    <dependency>
+        <groupId>io.github.youngyajun</groupId>
+        <artifactId>yyj-webssh-core</artifactId>
+    </dependency>
+    <!-- WebSSH Spring Boot 2.x Starter（必选） -->
+    <dependency>
+        <groupId>io.github.youngyajun</groupId>
+        <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
+    </dependency>
+</dependencies>
 ```
 
-> Starter 会自动传递 `yyj-webssh-core`、`spring-boot-starter-web`、`spring-boot-starter-websocket`，无需重复声明。
+> **依赖说明**：
+> - `yyj-webssh-core` 与 `yyj-webssh-spring-boot*-starter` 必须同时引入，二者缺一不可
+> - Starter 会自动传递 `spring-boot-starter-web`、`spring-boot-starter-websocket`，无需重复声明
+> - `spring-boot-configuration-processor` 已在 starter 中标记为 `optional`，不会传递到最终项目
 
 **步骤三：配置 `application-webssh.yml`**
 
@@ -390,13 +433,188 @@ spring:
 
 > 路径前缀 `/webssh` 可通过 `webssh.context-path` 自定义。
 
-# 6. WebSSH相关项目推荐
+# 6. Nginx 反向代理配置
+
+当 WebSSH Starter 被嵌入到现有项目并通过 Nginx 暴露对外服务时，需要正确配置反向代理，特别是 WebSocket 升级和长连接超时。
+
+## 6.1 路由结构
+
+默认 `webssh.context-path=/webssh`，所有路径都在该前缀下：
+
+| 类型 | 路径 | 说明 |
+|------|------|------|
+| 静态资源 | `/webssh/login.html`、`/webssh/index.html`、`/webssh/images/**`、`/webssh/js/**`、`/webssh/style/**` | 前端页面与静态资源 |
+| 页面跳转 | `/webssh`、`/webssh/logout` | 重定向到 `index.html` |
+| 认证 API | `/webssh/auth/**` | 登录、登出、公钥、状态检查 |
+| 文件 API | `/webssh/api/**` | 文件管理、监控、命令执行 |
+| **WebSocket** | `/webssh/ws` | 终端通道（query 参数：`host`、`cols`、`rows`、`username`、`password`、`keyId`） |
+
+## 6.2 关键约束（重要）
+
+前端 JS 从浏览器地址栏动态推断 `contextPath`：
+
+```javascript
+const contextPath = window.location.pathname.replace(/\/[^/]*$/, '');
+let wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${contextPath}/ws?...`;
+fetch(contextPath + '/api/...');
+```
+
+由此衍生两条硬性约束：
+
+1. **不能 rewrite 路径**：`proxy_pass` 末尾不能加 `/`（不要写成 `proxy_pass http://backend/;`），否则 URI 被改写后前端推断的 contextPath 与后端实际路径错位
+2. **WebSocket 协议自动跟随**：站点是 HTTPS 时前端自动用 `wss://`，Nginx 这边 SSL 终止后用 HTTP 转给后端即可，后端无需配置 SSL
+
+## 6.3 推荐配置（HTTPS + WebSocket）
+
+假设后端应用监听 `127.0.0.1:8080`，对外域名 `example.com`：
+
+```nginx
+# HTTP -> HTTPS 跳转
+server {
+    listen 80;
+    server_name example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name example.com;
+
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    # ZMODEM rz/sz 大文件 + 文件管理器上传，按需调整
+    client_max_body_size 1024m;
+
+    # ============ WebSSH WebSocket（必须单独 location 配置升级头）============
+    location ^~ /webssh/ws {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket 升级头（仅此 location 需要）
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+
+        # ZMODEM rz/sz 大文件传输 + 长会话 SSH 操作，必须放宽超时
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
+        proxy_buffering     off;
+    }
+
+    # ============ WebSSH 其他路径（页面、静态资源、auth、api）============
+    location ^~ /webssh/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ============ 业务应用其他路径 ============
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        # 或 try_files $uri $uri/ /index.html; （前端 SPA 场景）
+    }
+}
+```
+
+## 6.4 关键点说明
+
+### 6.4.1 为什么必须用 `^~`
+
+Nginx location 匹配优先级：`=` > `^~` > 正则 > 普通前缀。若 WebSSH 用普通前缀 `location /webssh/`，会被如下正则规则截走：
+
+```nginx
+location ~ .*\.(gif|jpg|jpeg|png|bmp|swf)$ { ... }   # 拦截 /webssh/images/*.png
+location ~ .*\.(js|css)?$ { ... }                    # 拦截 /webssh/js/*.js、/webssh/style/*.css
+```
+
+这些规则通常只设置 `expires` 缓存头，没有 `proxy_pass`，会用 `try_files` 兜底成 `index.html`，导致前端 JS/CSS/图片加载失败。加 `^~` 后，`/webssh/` 下所有请求都走反代规则，不再被正则匹配。
+
+### 6.4.2 为什么 WebSocket 必须独立 location
+
+`Upgrade`、`Connection` 升级头只对 `/webssh/ws` 路径生效。若加到普通 HTTP location 上，会污染静态资源请求。Nginx 按 `^~` 最长前缀匹配，`/webssh/ws` 会命中独立 location，普通请求走 `/webssh/`。
+
+### 6.4.3 超时与缓冲
+
+| 配置项 | 推荐值 | 原因 |
+|--------|--------|------|
+| `proxy_read_timeout` | `3600s` | ZMODEM 大文件传输、长 SSH 会话默认 60s 会被切断 |
+| `proxy_send_timeout` | `3600s` | 同上 |
+| `proxy_buffering` | `off`（仅 ws） | 关闭缓冲确保终端实时响应 |
+| `client_max_body_size` | `1024m` | 文件管理器上传大文件需要 |
+
+### 6.4.4 IP 锁定功能（可选）
+
+默认 `webssh.login-security.trust-forwarded-for=false`，不信任 `X-Forwarded-For` 等转发头（防伪造）。若希望登录失败锁定基于真实客户端 IP，需要在 `application.yml` 中开启：
+
+```yaml
+webssh:
+  login-security:
+    trust-forwarded-for: true
+```
+
+同时 Nginx 必须传递 `X-Forwarded-For` / `X-Real-IP`（上方配置已包含）。
+
+## 6.5 子路径部署场景
+
+若整个应用部署在子路径下（如 `/myapp/`），需同步调整 WebSSH 的 `context-path`：
+
+```yaml
+webssh:
+  context-path: /myapp/webssh
+```
+
+Nginx 配置：
+
+```nginx
+location ^~ /myapp/webssh/ws {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_buffering off;
+}
+
+location ^~ /myapp/ {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+## 6.6 验证
+
+部署后访问 `https://example.com/webssh/login.html`：
+
+- 登录页能打开 → 静态资源 location 正常
+- 登录成功 → auth API 反代正常
+- 打开终端能连 SSH → WebSocket 升级头配置正确
+- rz/sz 传大文件不断 → `proxy_read_timeout 3600s` 生效
+
+# 7. WebSSH相关项目推荐
 
 Guacamole：[https://github.com/apache/guacamole-server](https://github.com/apache/guacamole-server)
 
 ttyd：[https://github.com/tsl0922/ttyd](https://github.com/tsl0922/ttyd)
 
-# 7. 致谢
+# 8. 致谢
 
 本项目站在以下优秀开源项目的肩膀上，衷心感谢它们的作者与社区：
 
