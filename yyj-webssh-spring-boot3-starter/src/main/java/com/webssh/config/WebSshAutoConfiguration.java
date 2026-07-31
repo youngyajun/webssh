@@ -24,6 +24,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
+import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.net.InetAddress;
@@ -104,6 +105,24 @@ public class WebSshAutoConfiguration {
     @Bean
     public WebMvcConfigurer webSshResourceConfigurer(WebSshProperties properties) {
         return new WebMvcConfigurer() {
+            @Override
+            public void addViewControllers(ViewControllerRegistry registry) {
+                // 根路径 / 重定向到 webssh 首页（contextPath），避免访问根路径出现 404 Whitelabel 页面
+                String contextPath = properties.getContextPath();
+                if (contextPath == null || contextPath.isEmpty() || "/".equals(contextPath)) {
+                    // contextPath 为空或根路径时无需重定向（控制器已直接映射根路径）
+                    return;
+                }
+                if (!contextPath.startsWith("/")) {
+                    contextPath = "/" + contextPath;
+                }
+                // 去除尾部斜杠，确保重定向目标为 /webssh 而非 /webssh/
+                if (contextPath.endsWith("/")) {
+                    contextPath = contextPath.substring(0, contextPath.length() - 1);
+                }
+                registry.addRedirectViewController("/", contextPath);
+            }
+
             @Override
             public void addResourceHandlers(ResourceHandlerRegistry registry) {
                 String contextPath = properties.getContextPath();
