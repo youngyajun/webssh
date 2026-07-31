@@ -24,6 +24,7 @@
 - **认证方式**：密码认证与私钥认证（可选私钥口令）
 - **终端自适应**：`PTY`尺寸随浏览器窗口实时同步，`vim`等程序启动即正确填充
 - **系统监控**：实时显示远程主机 `CPU`/`RAM`/`Disk`/`Load`/`Net` 指标，阈值告警（≥75% 警告、≥90% 危险），点击指标可查看详情
+- **日志集成**：独立部署内置 `logback-spring.xml`（控制台+文件输出+按天滚动归档+自动清理）；starter 集成提供日志配置模板，不污染宿主项目
 
 ![webssh](data/md/webssh.gif)
 
@@ -80,6 +81,7 @@ webssh/                                                # 父 POM (java=21, sb=4.
 │       │   └── websocket/                            # WebSocket 配置与处理器
 │       └── resources/META-INF/
 │           ├── resources/webssh/                     # 前端页面（HTML/CSS/JS/xterm）
+│           ├── webssh-logback-template.xml           # 日志配置模板（不自动加载，供集成方复制）
 │           └── spring/                               # AutoConfiguration.imports
 │
 ├── yyj-webssh-spring-boot2-starter/                # spring-boot2-starter（SB 2.3~2.7, java=8, sb=2.3.12）
@@ -87,6 +89,7 @@ webssh/                                                # 父 POM (java=21, sb=4.
 │       ├── java/com/webssh/                          # 与默认 starter 同名同结构（import javax.servlet）
 │       └── resources/META-INF/
 │           ├── resources/webssh/                     # 前端页面（同上）
+│           ├── webssh-logback-template.xml           # 日志配置模板（不自动加载，供集成方复制）
 │           └── spring.factories                      # SB 2.x 自动装配入口
 │
 └── webssh-app/                                       # 示例应用（SB 4.0.6 + Java 21，可直接运行）
@@ -94,7 +97,8 @@ webssh/                                                # 父 POM (java=21, sb=4.
         ├── java/com/yyj/                              # 启动类（启动后自动打开浏览器）
         └── resources/
             ├── application.yml                        # 端口、上传限制等
-            └── application-webssh.yml                 # WebSSH 配置
+            ├── application-webssh.yml                 # WebSSH 配置 + 日志配置（logging 节点）
+            └── logback-spring.xml                     # 日志配置（独立部署专用，直接生效）
 ```
 
 # 4. 快速开始
@@ -405,7 +409,79 @@ spring:
 
 若使用 Nginx 反向代理，还需调整 `client_max_body_size`。下载接口为流式传输，无大小限制。
 
-## 5.3 安全建议
+## 5.3 日志配置
+
+项目已集成 Logback 日志功能，支持控制台输出 + 文件输出 + 按天滚动归档 + 自动清理。
+
+### 5.3.1 独立部署（webssh-app）
+
+`webssh-app` 内置 `logback-spring.xml`，开箱即用，无需额外配置即可在运行目录下生成日志文件：
+
+```
+你的jar包所在目录/
+├── webssh-app.jar
+└── logs/
+    ├── webssh.log              ← 主日志（INFO 及以上）
+    ├── webssh-error.log        ← 错误日志（仅 ERROR）
+    └── history/
+        ├── webssh-2026-07-31.0.log.gz       ← 按天归档压缩
+        └── webssh-error-2026-07-31.0.log.gz
+```
+
+日志相关配置项位于 `application-webssh.yml` 的 `logging` 节点下，可按需调整：
+
+```yaml
+logging:
+  level:
+    root: INFO
+    com.yyj: INFO                    # 项目自身代码日志级别（调试时可改为 DEBUG）
+    io.github.youngyajun: INFO       # WebSSH 框架日志级别
+  file:
+    name: ./logs/webssh.log          # 日志文件路径（可改为绝对路径如 /var/log/webssh/webssh.log）
+    history-path: ./logs/history     # 历史归档目录
+    max-size: 100MB                  # 单文件最大大小（超过自动切分）
+    max-history: 30                  # 保留天数（超过自动清理）
+    total-size-cap: 3GB              # 总大小上限（超过自动清理最老日志）
+```
+
+### 5.3.2 Starter 集成（嵌入已有项目）
+
+**设计原则**：Starter 不自动加载日志配置，避免与宿主项目的 `logback-spring.xml` 冲突。Starter 仅在 jar 内提供日志配置模板，由集成方按需复制使用。
+
+集成方有两种日志配置方式：
+
+**方式一：使用 Spring Boot 原生配置（最简单）**
+
+直接在宿主项目的 `application.yml` 中配置：
+
+```yaml
+logging:
+  level:
+    root: INFO
+    com.webssh: INFO                 # WebSSH 框架包名
+  file:
+    name: ./logs/myapp.log           # 日志文件路径
+```
+
+> Spring Boot 自带的 `logback-spring.xml`（`base.xml`）会自动输出到文件，但功能较简单（无归档、无错误分离）。
+
+**方式二：复制 Starter 提供的日志模板（功能完整）**
+
+从 starter jar 中提取日志配置模板，放到宿主项目的 `src/main/resources/` 根目录：
+
+```bash
+# 从 starter jar 中提取日志模板
+jar xf yyj-webssh-spring-boot3-starter-3.0.0.jar META-INF/webssh-logback-template.xml
+
+# 重命名为 logback-spring.xml 并移动到 resources 根目录
+mv META-INF/webssh-logback-template.xml src/main/resources/logback-spring.xml
+```
+
+这样即可获得完整功能：控制台 + 文件输出、按天滚动归档、错误日志分离、自动清理等。日志参数同样通过 `application.yml` 的 `logging` 节点覆盖。
+
+> **注意**：`logback-spring.xml` 必须放在 classpath 根目录（`src/main/resources/`）才会被 Spring Boot 自动加载。Starter 内的模板放在 `META-INF/` 子目录下，不会自动生效，仅供复制参考。
+
+## 5.4 安全建议
 
 1. **修改默认凭据**：`webssh.username` 和 `webssh.password` 无默认值，启动时强制校验，请使用强密码
 2. **生产环境开启主机密钥校验**：设置 `host-key-verification: yes` 并配置 `known-hosts`
@@ -413,13 +489,13 @@ spring:
 4. **反代场景注意 IP 识别**：使用 Nginx 时设置 `trust-forwarded-for: true` 以识别真实客户端 IP
 5. **使用 HTTPS**：通过反向代理启用 TLS，保护 WebSocket 和登录凭据传输
 
-## 5.4 集成 Spring Security（可选）
+## 5.5 集成 Spring Security（可选）
 
 如果接入项目已启用 `Spring Security`，`WebSSH` 的页面、认证接口、文件管理 API、`WebSocket` 通道都会被 Security 拦截，需要显式放行。最简单的做法是将整个 `webssh.context-path`（默认 `/webssh`）下的所有路径全部 `permitAll()`。
 
 > **说明**：WebSSH Starter 内部已自带登录鉴权（基于 `webssh.username` / `webssh.password` + RSA 加密 + IP 锁定 + 登录失败计数）。放行后 WebSSH 仍会走自身登录流程，不会"裸奔"。无需在 Spring Security 侧重复鉴权。
 
-### 5.4.1 Spring Boot 2.x（Spring Security 5.x，`javax`）
+### 5.5.1 Spring Boot 2.x（Spring Security 5.x，`javax`）
 
 ```java
 @Configuration
@@ -439,7 +515,7 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter {
 }
 ```
 
-### 5.4.2 Spring Boot 3.x / 4.x（Spring Security 6.x，`jakarta`）
+### 5.5.2 Spring Boot 3.x / 4.x（Spring Security 6.x，`jakarta`）
 
 Spring Security 6 已移除 `WebSecurityConfigurerAdapter`，改用 `SecurityFilterChain` Bean：
 
@@ -468,7 +544,7 @@ public class SecurityConfig {
 }
 ```
 
-### 5.4.3 注意事项
+### 5.5.3 注意事项
 
 1. **CSRF 必须关闭或针对 `/webssh/**` 排除**：WebSSH 登录走 `POST /webssh/auth/login`，开启 CSRF 后会被拦截返回 403
 2. **`context-path` 自定义**：若通过 `webssh.context-path` 修改了前缀（如 `/myapp/webssh`），需将上例中的 `/webssh/**` 同步替换
@@ -476,7 +552,7 @@ public class SecurityConfig {
 4. **WebSocket 与 Spring Security**：`/webssh/ws` 走 HTTP 升级握手，按上方规则放行即可，无需额外处理；若项目对 WS 有特殊鉴权过滤器，需单独排除
 5. **会话冲突**：WebSSH 内部使用 `HttpSession` 存储登录态与 RSA 私钥（一次性使用）。若接入项目也使用 Spring Session / Session 共享，请确保 `webssh.*` 相关 session attribute 不会被外部逻辑误清理
 
-## 5.5 API 接口
+## 5.6 API 接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

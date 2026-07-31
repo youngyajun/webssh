@@ -126,3 +126,39 @@ webssh:
     max-fail-attempts: 5      							# 最大失败次数（0 或负数=关闭限制）
     lock-minutes: 5           							# 锁定时长（分钟）
     trust-forwarded-for: false 							# 是否信任 X-Forwarded-For（反代场景设为 true）
+
+# ============================================================================
+# 日志配置（logback-spring.xml 已内置，此处可覆盖默认值）
+# ----------------------------------------------------------------------------
+# 项目通过 logback-spring.xml 集成日志功能，支持：
+#   - 控制台输出
+#   - 文件输出（按天滚动归档 + 自动清理）
+# 默认日志目录结构（位于程序运行目录/jar 包所在目录下）：
+#   logs/webssh.log        主日志文件（INFO 及以上）
+#   logs/webssh-error.log  错误日志文件（仅 ERROR）
+#   logs/history/          历史归档日志（按天压缩 .gz，保留 30 天）
+#
+# 以下配置项可覆盖 logback-spring.xml 中的默认值，按需调整：
+# ============================================================================
+logging:
+  # 日志级别（root 全局级别，可单独指定包级别）
+  level:
+    root: INFO
+    # 项目自身代码日志级别（调试时可改为 DEBUG）
+    com.yyj: INFO
+    # WebSSH 框架日志级别
+    io.github.youngyajun: INFO
+  # 日志文件配置
+  file:
+    # 日志文件完整路径（优先级高于 path）
+    # 默认输出到程序运行目录下 logs/webssh.log
+    # 如需固定目录，可改为绝对路径，例如：/var/log/webssh/webssh.log
+    name: ./logs/webssh.log
+    # 历史归档日志目录（默认 logs/history）
+    history-path: ./logs/history
+    # 单个日志文件最大大小（超过自动切分）
+    max-size: 100MB
+    # 日志文件保留天数（超过自动清理）
+    max-history: 30
+    # 日志总大小上限（超过自动清理最老日志）
+    total-size-cap: 3GB

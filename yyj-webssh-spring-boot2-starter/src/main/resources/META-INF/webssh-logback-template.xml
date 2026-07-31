@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+  WebSSH Starter - 日志配置模板（logback-spring.xml）
+  ============================================================================
+  本文件为「集成方参考模板」，打包在 starter jar 内的 META-INF/ 目录下，
+  不会自动加载，不会影响宿主项目的日志配置。
+
+  【为什么 starter 不自动加载日志配置？】
+    Spring Boot 只会从 classpath 根目录加载唯一的 logback-spring.xml。
+    若 starter 自带并自动生效，会与宿主项目的日志配置冲突，违背 starter
+    设计原则。因此 starter 仅提供模板，由集成方按需复制到自己的项目中。
+
+  【使用方法】
+    方式一（推荐）：从本模板复制内容，保存为宿主项目 src/main/resources/logback-spring.xml
+    方式二：从 jar 包中提取本文件：
+      jar xf yyj-webssh-spring-boot2-starter-*.jar META-INF/webssh-logback-template.xml
+      然后重命名为 logback-spring.xml 并移动到 src/main/resources/ 下
+
+  【功能特性】
+    1. 控制台输出（开发/调试用）
+    2. 按天滚动输出到文件 logs/webssh.log
+    3. 自动归档：logs/history/webssh-yyyy-MM-dd.i.log.gz
+    4. 自动清理：保留最近 30 天日志，超过自动删除
+    5. 单文件最大 100MB，超过自动切分
+    6. 错误日志单独输出到 logs/webssh-error.log
+    7. 支持通过 application.yml 覆盖日志目录/级别等参数
+  ============================================================================
+-->
+<configuration scan="true" scanPeriod="60 seconds">
+
+    <!-- 引入 Spring Boot 默认配置（保留颜色、级别等默认行为） -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!--
+      日志文件路径解析
+      优先级：logging.file.name > logging.file.path > 默认 ./logs/webssh.log
+      可在 application.yml 中通过 logging.file.name / logging.file.path 覆盖
+    -->
+    <springProperty name="LOG_FILE_NAME" source="logging.file.name" defaultValue="./logs/webssh.log"/>
+    <springProperty name="LOG_FILE_PATH" source="logging.file.path" defaultValue="./logs"/>
+
+    <!-- 归档历史日志目录（位于日志文件同级目录下的 history 子目录） -->
+    <springProperty name="LOG_HISTORY_PATH" source="logging.file.history-path" defaultValue="./logs/history"/>
+
+    <!-- 日志文件保留天数（超过自动清理） -->
+    <springProperty name="LOG_MAX_HISTORY" source="logging.file.max-history" defaultValue="30"/>
+
+    <!-- 单个日志文件最大大小 -->
+    <springProperty name="LOG_MAX_FILE_SIZE" source="logging.file.max-size" defaultValue="100MB"/>
+
+    <!-- 日志总大小上限（超过自动清理最老日志） -->
+    <springProperty name="LOG_TOTAL_SIZE_CAP" source="logging.file.total-size-cap" defaultValue="3GB"/>
+
+    <!-- 控制台输出 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!--
+      主日志文件（INFO 及以上级别）
+      - RollingFileAppender：按大小+时间滚动
+      - SizeAndTimeBasedRollingPolicy：同时支持按时间和大小切分
+    -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE_NAME}</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- 归档文件命名：logs/history/webssh-2024-01-01.0.log.gz -->
+            <fileNamePattern>${LOG_HISTORY_PATH}/webssh-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <!-- 单文件最大大小 -->
+            <maxFileSize>${LOG_MAX_FILE_SIZE}</maxFileSize>
+            <!-- 保留天数 -->
+            <maxHistory>${LOG_MAX_HISTORY}</maxHistory>
+            <!-- 总大小上限 -->
+            <totalSizeCap>${LOG_TOTAL_SIZE_CAP}</totalSizeCap>
+            <!-- 启动时清理被删除的归档文件引用 -->
+            <cleanHistoryOnStart>true</cleanHistoryOnStart>
+        </rollingPolicy>
+    </appender>
+
+    <!--
+      错误日志文件（仅 ERROR 级别，便于快速定位问题）
+      独立文件，便于运维快速排查错误
+    -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE_PATH}/webssh-error.log</file>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_HISTORY_PATH}/webssh-error-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${LOG_MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${LOG_MAX_HISTORY}</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+            <cleanHistoryOnStart>true</cleanHistoryOnStart>
+        </rollingPolicy>
+    </appender>
+
+    <!--
+      开发环境（profile=dev）：仅控制台输出，便于本地调试
+      通过 application.yml 激活：spring.profiles.active=dev
+    -->
+    <springProfile name="dev">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!--
+      生产环境（profile=prod）：控制台 + 文件 + 错误文件
+      部署时通过 -Dspring.profiles.active=prod 激活
+    -->
+    <springProfile name="prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </root>
+    </springProfile>
+
+    <!--
+      默认环境（未匹配 dev/prod 时生效）
+      同时输出到控制台和文件，确保部署后也能看到日志
+    -->
+    <springProfile name="default,test">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </root>
+    </springProfile>
+
+    <!--
+      局部日志级别调整（可按需调整第三方框架日志输出级别）
+      常见框架默认 DEBUG 日志较多，调高到 WARN 减少噪音
+    -->
+    <logger name="org.apache.sshd" level="WARN"/>
+    <logger name="com.jcraft.jsch" level="WARN"/>
+    <logger name="org.springframework" level="INFO"/>
+    <logger name="org.springframework.boot.web.embedded" level="INFO"/>
+    <logger name="org.hibernate.validator" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+
+</configuration>
