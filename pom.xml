@@ -46,7 +46,6 @@
     <modules>
         <module>yyj-webssh-core</module>
         <module>yyj-webssh-spring-boot3-starter</module>
-        <module>yyj-webssh-spring-boot2-starter</module>
         <module>webssh-app</module>
     </modules>
 
