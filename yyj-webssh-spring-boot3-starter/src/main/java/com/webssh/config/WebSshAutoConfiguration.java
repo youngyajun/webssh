@@ -1,6 +1,7 @@
 package com.webssh.config;
 
 import com.webssh.controller.WebSshAuthController;
+import com.webssh.controller.WebSshCaptchaController;
 import com.webssh.controller.WebSshFileController;
 import com.webssh.controller.WebSshPageController;
 import com.webssh.security.ClientIpExtractor;
@@ -45,8 +46,10 @@ import java.util.Set;
 @ConditionalOnProperty(prefix = "webssh", name = "enabled", havingValue = "true", matchIfMissing = true)
 @Import({
         WebSshAuthController.class,
+        WebSshCaptchaController.class,
         WebSshPageController.class,
         WebSshFileController.class,
+
         LocalPtyService.class,
         LoginAttemptService.class,
         ClientIpExtractor.class,
@@ -145,9 +148,11 @@ public class WebSshAutoConfiguration {
                         .excludePathPatterns(
                                 contextPath + "login.html",
                                 contextPath + "auth/**",
+                                contextPath + "captcha/**",
                                 contextPath + "images/**",
                                 contextPath + "js/**",
-                                contextPath + "style/**"
+                                contextPath + "style/**",
+                                contextPath + "tac/**"
                         );
             }
         };

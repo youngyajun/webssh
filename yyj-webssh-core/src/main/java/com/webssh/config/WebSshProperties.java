@@ -88,6 +88,11 @@ public class WebSshProperties {
      */
     private LoginSecurity loginSecurity = new LoginSecurity();
 
+    /**
+     * 滑块验证码配置（tianai-captcha）
+     */
+    private Captcha captcha = new Captcha();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -319,6 +324,14 @@ public class WebSshProperties {
         this.loginSecurity = loginSecurity;
     }
 
+    public Captcha getCaptcha() {
+        return captcha;
+    }
+
+    public void setCaptcha(Captcha captcha) {
+        this.captcha = captcha;
+    }
+
     /**
      * WebSSH 管理界面账号（独立于 Linux 连接账号）
      */
@@ -524,6 +537,26 @@ public class WebSshProperties {
 
         public void setTrustForwardedFor(boolean trustForwardedFor) {
             this.trustForwardedFor = trustForwardedFor;
+        }
+    }
+
+    /**
+     * 滑块验证码配置（tianai-captcha）
+     * 不依赖 redis，验证码数据使用本地内存缓存；二次验证开启后，登录时需携带验证成功返回的 token
+     */
+    public static class Captcha {
+        /**
+         * 是否启用滑块验证码，默认 true
+         * 设为 false 则登录时不校验验证码，前端也不弹出滑块
+         */
+        private boolean enabled = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

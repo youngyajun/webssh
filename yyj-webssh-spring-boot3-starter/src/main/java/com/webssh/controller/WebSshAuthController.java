@@ -1,5 +1,7 @@
 package com.webssh.controller;
 
+import cloud.tianai.captcha.application.ImageCaptchaApplication;
+import cloud.tianai.captcha.spring.plugins.secondary.SecondaryVerificationApplication;
 import com.webssh.config.WebSshProperties;
 import com.webssh.security.ClientIpExtractor;
 import com.webssh.security.LoginAttemptService;
@@ -40,6 +42,9 @@ public class WebSshAuthController {
     @Autowired
     private ClientIpExtractor clientIpExtractor;
 
+    @Autowired
+    private ImageCaptchaApplication imageCaptchaApplication;
+
     /**
      * 获取 RSA 公钥
      * 每次请求生成新的密钥对，私钥以 keyId 为索引存入 Session，公钥和 keyId 返回前端用于加密密码
@@ -56,6 +61,8 @@ public class WebSshAuthController {
             result.put("code", 200);
             result.put("publicKey", publicKeyBase64);
             result.put("keyId", keyId);
+            // 附带验证码开关，前端据此决定是否弹出滑块验证
+            result.put("captchaEnabled", properties.getCaptcha().isEnabled());
             // 附带登录锁定状态
             String clientIp = clientIpExtractor.extract(request);
             LoginAttemptService.LockStatus status = loginAttemptService.checkLocked(clientIp);
@@ -93,6 +100,23 @@ public class WebSshAuthController {
         String username = params.get("username");
         String encryptedPassword = params.get("password");
         String keyId = params.get("keyId");
+
+        // 滑块验证码二次校验（开启时必须校验通过才能继续登录）
+        if (properties.getCaptcha().isEnabled()) {
+            String captchaValidation = params.get("captchaValidation");
+            if (captchaValidation == null || captchaValidation.isEmpty()) {
+                result.put("code", 401);
+                result.put("msg", "请先完成滑块验证");
+                return result;
+            }
+            boolean valid = ((SecondaryVerificationApplication) imageCaptchaApplication)
+                    .secondaryVerification(captchaValidation);
+            if (!valid) {
+                result.put("code", 401);
+                result.put("msg", "滑块验证失败或已过期，请重新验证");
+                return result;
+            }
+        }
 
         if (username == null || encryptedPassword == null) {
             result.put("code", 400);

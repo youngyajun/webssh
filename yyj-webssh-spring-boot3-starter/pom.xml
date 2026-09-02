@@ -56,6 +56,7 @@
     <properties>
         <java.version>17</java.version>
         <spring-boot.version>3.0.12</spring-boot.version>
+        <tianai-captcha.version>1.5.5</tianai-captcha.version>
     </properties>
 
     <dependencies>
@@ -89,6 +90,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-configuration-processor</artifactId>
             <optional>true</optional>
+        </dependency>
+
+        <!-- tianai-captcha 行为验证码（滑块验证码），不依赖 redis，使用本地内存缓存 -->
+        <dependency>
+            <groupId>cloud.tianai.captcha</groupId>
+            <artifactId>tianai-captcha-springboot-starter</artifactId>
+            <version>${tianai-captcha.version}</version>
         </dependency>
 
     </dependencies>

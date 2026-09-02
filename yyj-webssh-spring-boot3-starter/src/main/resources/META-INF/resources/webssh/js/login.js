@@ -7,6 +7,12 @@ let rsaPublicKey = null;
 let rsaKeyId = null;
 // 登录锁定倒计时计时器
 let lockCountdownTimer = null;
+// 是否启用滑块验证码（从后端获取）
+let captchaEnabled = true;
+// 滑块验证成功后的二次验证 token，登录时回传后端
+let captchaValidation = null;
+// tianai-captcha 实例
+let tacInstance = null;
 
 const loginBtn = document.getElementById('loginBtn');
 const errorMessage = document.getElementById('errorMessage');
@@ -95,6 +101,8 @@ async function fetchPublicKey() {
             const pemBody = data.publicKey.match(/.{1,64}/g).join('\n');
             rsaPublicKey = '-----BEGIN PUBLIC KEY-----\n' + pemBody + '\n-----END PUBLIC KEY-----';
             rsaKeyId = data.keyId;
+            // 读取验证码开关
+            captchaEnabled = data.captchaEnabled !== undefined ? data.captchaEnabled : true;
             // 页面加载时若已被锁定，直接展示倒计时
             if (data.locked && data.lockRemainingSeconds) {
                 startLockCountdown(data.lockRemainingSeconds);
@@ -112,7 +120,6 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
-    const loading = document.getElementById('loading');
 
     // 处于锁定状态时禁止提交
     if (lockCountdownTimer) {
@@ -127,6 +134,33 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
 
     if (!rsaPublicKey || !rsaKeyId) {
         // 公钥未获取到，尝试重新获取
+        await fetchPublicKey();
+        if (!rsaPublicKey || !rsaKeyId) {
+            errorMessage.textContent = '获取加密公钥失败，请刷新页面重试';
+            errorMessage.classList.add('show');
+            return;
+        }
+    }
+
+    // 启用滑块验证码且尚未验证时，弹出验证码；验证成功后回调 doLogin
+    if (captchaEnabled && !captchaValidation) {
+        initCaptcha();
+        return;
+    }
+
+    // 已验证或未启用验证码，执行登录
+    doLogin();
+});
+
+/**
+ * 执行登录（携带滑块验证码二次验证 token）
+ */
+async function doLogin() {
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const loading = document.getElementById('loading');
+
+    if (!rsaPublicKey || !rsaKeyId) {
         await fetchPublicKey();
         if (!rsaPublicKey || !rsaKeyId) {
             errorMessage.textContent = '获取加密公钥失败，请刷新页面重试';
@@ -155,7 +189,12 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ username, password: encryptedPassword, keyId: rsaKeyId })
+            body: JSON.stringify({
+                username,
+                password: encryptedPassword,
+                keyId: rsaKeyId,
+                captchaValidation: captchaValidation
+            })
         });
         const data = await response.json();
         if (data.code === 200) {
@@ -179,9 +218,10 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
             }
             errorMessage.textContent = msg;
             errorMessage.classList.add('show');
-            // 公钥已使用（一次性），需要重新获取
+            // 公钥已使用（一次性），需要重新获取；验证码也需重新完成
             rsaPublicKey = null;
             rsaKeyId = null;
+            captchaValidation = null;
             fetchPublicKey();
         }
     } catch (error) {
@@ -194,4 +234,73 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         }
         loading.classList.remove('show');
     }
-});
+}
+
+/**
+ * 初始化 tianai-captcha 滑块验证码
+ * 弹出居中浮层，验证成功后设置 captchaValidation 并执行登录
+ */
+function initCaptcha() {
+    // 销毁之前的验证码实例
+    if (tacInstance) {
+        tacInstance.destroyWindow();
+        tacInstance = null;
+    }
+    // 显示遮罩层
+    const overlay = document.getElementById('captcha-overlay');
+    if (overlay) {
+        overlay.classList.add('show');
+    }
+    const captchaConfig = {
+        // 生成滑块验证码接口
+        requestCaptchaDataUrl: contextPath + '/captcha/get',
+        // 校验滑块验证码接口
+        validCaptchaUrl: contextPath + '/captcha/check',
+        // 验证码绑定的容器
+        bindEl: '#captcha-box',
+        // 验证成功回调
+        validSuccess: (res, c, t) => {
+            t.destroyWindow();
+            tacInstance = null;
+            hideCaptchaOverlay();
+            // 保存二次验证 token，执行登录
+            captchaValidation = res.data.token;
+            doLogin();
+        },
+        // 验证失败回调
+        validFail: (res, c, t) => {
+            t.reloadCaptcha();
+        },
+        // 刷新按钮回调
+        btnRefreshFun: (el, tac) => {
+            tac.reloadCaptcha();
+        },
+        // 关闭按钮回调
+        btnCloseFun: (el, tac) => {
+            tac.destroyWindow();
+            tacInstance = null;
+            hideCaptchaOverlay();
+        }
+    };
+    window
+        .loadTAC(contextPath + '/tac', captchaConfig, { logoUrl: null })
+        .then((tac) => {
+            tacInstance = tac;
+            tac.init();
+        })
+        .catch((e) => {
+            errorMessage.textContent = '验证码加载失败，请重试';
+            errorMessage.classList.add('show');
+            hideCaptchaOverlay();
+        });
+}
+
+/**
+ * 隐藏验证码遮罩层
+ */
+function hideCaptchaOverlay() {
+    const overlay = document.getElementById('captcha-overlay');
+    if (overlay) {
+        overlay.classList.remove('show');
+    }
+}

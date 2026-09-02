@@ -10,6 +10,8 @@
 <body>
     <!-- JSEncrypt 用于 RSA 加密密码 -->
     <script src="js/jsencrypt.min.js"></script>
+    <!-- tianai-captcha 滑块验证码动态加载脚本 -->
+    <script src="tac/load.js"></script>
     <div class="login-container">
         <!-- 左侧品牌展示 -->
         <div class="brand-side">
@@ -51,6 +53,10 @@
                 &copy; 2026 WebSSH | youngyajun
             </div>
         </div>
+    </div>
+    <!-- tianai-captcha 滑块验证码弹窗容器（居中浮层+遮罩） -->
+    <div id="captcha-overlay">
+        <div id="captcha-box"></div>
     </div>
     <script src="js/login.js"></script>
 </body>
