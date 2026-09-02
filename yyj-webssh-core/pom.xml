@@ -19,7 +19,7 @@
     <description>
         WebSSH Core - 与 Servlet API 解耦的核心服务层
         包含 SSH/PTY/本地文件服务等 servlet-free 的业务类，
-        可被不同版本的 starter（2.x/3.x/4.x）共享复用。
+        可被不同版本的 starter（3.x/4.x）共享复用。
     </description>
     <url>https://github.com/youngyajun/webssh</url>
 

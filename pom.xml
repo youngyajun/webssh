@@ -83,13 +83,6 @@
                 <artifactId>yyj-webssh-spring-boot3-starter</artifactId>
                 <version>3.0.0</version>
             </dependency>
-
-            <!-- WebSSH Starter 2.x (javax.servlet + spring.factories, 适配 SB 2.3~2.7) -->
-            <dependency>
-                <groupId>io.github.youngyajun</groupId>
-                <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
-                <version>2.0.0</version>
-            </dependency>
         </dependencies>
     </dependencyManagement>
 
