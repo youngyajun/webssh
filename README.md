@@ -591,7 +591,8 @@ public class SecurityConfig {
 | 类型 | 路径 | 说明 |
 |------|------|------|
 | 静态资源 | `/webssh/login.html`、`/webssh/index.html`、`/webssh/images/**`、`/webssh/js/**`、`/webssh/style/**` | 前端页面与静态资源 |
-| 页面跳转 | `/webssh`、`/webssh/logout` | 重定向到 `index.html` |
+| 页面跳转 | `/webssh` | 302 重定向到 `index.html` |
+| 页面跳转 | `/webssh/logout` | 清理会话后 302 重定向到 `login.html` |
 | 认证 API | `/webssh/auth/**` | 登录、登出、公钥、状态检查 |
 | 文件 API | `/webssh/api/**` | 文件管理、监控、命令执行 |
 | **WebSocket** | `/webssh/ws` | 终端通道（query 参数：`host`、`cols`、`rows`、`username`、`password`、`keyId`） |
@@ -620,6 +621,8 @@ fetch(contextPath + '/api/...');
 server {
     listen 80;
     server_name example.com;
+    # 注意：$host 不含端口。若 HTTPS 监听非 443 端口（如 8443），
+    # 需改为 return 301 https://$host:8443$request_uri;
     return 301 https://$host$request_uri;
 }
 
@@ -638,7 +641,8 @@ server {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
 
-        proxy_set_header Host              $host;
+        # 用 $http_host（而非 $host）保留端口，防止后端重定向丢端口（见 6.4.5）
+        proxy_set_header Host              $http_host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -654,19 +658,29 @@ server {
     }
 
     # ============ WebSSH 其他路径（页面、静态资源、auth、api）============
-    location ^~ /webssh/ {
+    # 用 ^~ /webssh（无尾斜杠）而非 ^~ /webssh/：
+    #   - 必须覆盖无尾斜杠的 /webssh 入口，否则它会落入下方 location /，
+    #     若业务侧用 SPA try_files 兜底，/webssh 会被改写成业务 index.html
+    #   - 副作用：/websshxxx 等相似前缀路径也会被匹配；若存在这类路径，
+    #     改用组合写法：location = /webssh 与 location ^~ /webssh/ 各配一份
+    location ^~ /webssh {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
 
-        proxy_set_header Host              $host;
+        # 用 $http_host（而非 $host）保留端口，防止后端重定向丢端口（见 6.4.5）
+        proxy_set_header Host              $http_host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 后端 sendRedirect 产生的绝对 Location 重写为相对路径，交给浏览器（见 6.4.5）
+        proxy_redirect http://127.0.0.1:8080/ /;
     }
 
     # ============ 业务应用其他路径 ============
     location / {
         proxy_pass http://127.0.0.1:8080;
+        # 业务应用若也有重定向/绝对 URL 拼接，Host 同样建议用 $http_host
         # 或 try_files $uri $uri/ /index.html; （前端 SPA 场景）
     }
 }
@@ -687,7 +701,7 @@ location ~ .*\.(js|css)?$ { ... }                    # 拦截 /webssh/js/*.js、
 
 ### 6.4.2 为什么 WebSocket 必须独立 location
 
-`Upgrade`、`Connection` 升级头只对 `/webssh/ws` 路径生效。若加到普通 HTTP location 上，会污染静态资源请求。Nginx 按 `^~` 最长前缀匹配，`/webssh/ws` 会命中独立 location，普通请求走 `/webssh/`。
+`Upgrade`、`Connection` 升级头只对 `/webssh/ws` 路径生效。若加到普通 HTTP location 上，会污染静态资源请求。Nginx 按 `^~` 最长前缀匹配，`/webssh/ws` 会命中独立 location，普通请求走 `^~ /webssh`。
 
 ### 6.4.3 超时与缓冲
 
@@ -710,6 +724,59 @@ webssh:
 
 同时 Nginx 必须传递 `X-Forwarded-For` / `X-Real-IP`（上方配置已包含）。
 
+### 6.4.5 为什么用 `Host $http_host` 而不是 `Host $host`（重要）
+
+WebSSH 后端存在多处 `response.sendRedirect(...)`（如 `/webssh` → `/webssh/index.html`、未登录跳转 `login.html`），而 **Tomcat 会将相对重定向拼接为绝对 URL，且依据请求的 `Host` 头**：
+
+- `proxy_set_header Host $host;` — `$host` **会剥掉端口**。若 Nginx 监听非默认端口（如 `http://example.com:9001/webssh`），后端会生成 `http://example.com/webssh/index.html`，浏览器被跳到 80 端口，页面 404
+- `proxy_set_header Host $http_host;` — `$http_host` **保留原始 `host:port`**（如 `example.com:9001`），重定向地址完整无误
+
+因此**任何非 80/443 端口对外提供服务的场景都必须用 `$http_host`**。80/443 场景下两者等价，用 `$http_host` 也无副作用，可统一采用。
+
+配套的 `proxy_redirect` 是双保险：万一后端依据错误的 Host 拼出了指向后端自身（`http://127.0.0.1:8080/...`）或其他端口的绝对 Location，Nginx 会将其重写为相对路径，浏览器不会跳出当前端口。
+
+### 6.4.6 精简配置（HTTP、非默认端口）
+
+如果站点没有 HTTPS（例如内网 `http://example.com:9001/webssh`），也可以用单个 `location` 覆盖全部路径，WebSocket 升级头在同一个 `location` 内同样生效：
+
+```nginx
+server {
+    listen 9001;
+
+    # 文件上传需放宽（Nginx 默认 1MB 会拦截上传接口）
+    client_max_body_size 1024m;
+
+    # 代理到后端的 WebSSH 服务
+    # ^~ 防止同 server 内的正则 location（如静态资源 expires 规则）截走
+    # /webssh/js/**、/webssh/images/** 等请求（见 6.4.1）
+    location ^~ /webssh {
+        # 末尾不能加 /，避免 URI 被改写（见 6.2 关键约束）
+        proxy_pass http://127.0.0.1:9022;
+
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # 使用 $http_host 保留端口，避免后端拼重定向 URL 时丢失端口（见 6.4.5）
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 后端返回的 Location 重定向地址交给浏览器时，按当前 server 重写
+        proxy_redirect http://127.0.0.1:9022/ /;
+        # 域名指向但端口不对的绝对地址也重写为相对路径
+        proxy_redirect ~^https?://example\.com(?::\d+)?/(.*)$ /$1;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+> 说明：将 `Connection` 硬编码为 `"upgrade"` 时普通 HTTP 请求也会带上该头，Tomcat 能正常容忍；若同一路径下还代理了其他对 `Connection` 头敏感的服务，建议拆分为独立的 `location /webssh/ws`（如 6.3 推荐配置），或使用 `map $http_upgrade $connection_upgrade { default upgrade; '' close; }` 动态设置。
+
 ## 6.5 子路径部署场景
 
 若整个应用部署在子路径下（如 `/myapp/`），需同步调整 WebSSH 的 `context-path`：
@@ -725,7 +792,7 @@ Nginx 配置：
 location ^~ /myapp/webssh/ws {
     proxy_pass http://127.0.0.1:8080;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -739,21 +806,30 @@ location ^~ /myapp/webssh/ws {
 location ^~ /myapp/ {
     proxy_pass http://127.0.0.1:8080;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    # 后端 sendRedirect 产生的绝对 Location 重写为相对路径（见 6.4.5）
+    proxy_redirect http://127.0.0.1:8080/ /;
+    # 文件上传需放宽（Nginx 默认 1MB 会拦截上传接口）
+    client_max_body_size 1024m;
 }
 ```
+
+> 注意：`client_max_body_size` 与 `proxy_redirect` 必须放在覆盖 `/myapp/webssh/` 的 location（即 `^~ /myapp/`）中才对上传接口和页面重定向生效。
 
 ## 6.6 验证
 
 部署后访问 `https://example.com/webssh/login.html`：
 
 - 登录页能打开 → 静态资源 `location` 正常
+- 访问 `https://example.com/webssh`（无尾斜杠）能跳转到 `index.html` → 无尾斜杠入口未被 `location /` 兜底吞掉（见 6.3 注释）
 - 登录成功 → `auth API` 反代正常
+- 登出后跳回登录页且端口不变 → `Host $http_host` + `proxy_redirect` 配置正确（见 6.4.5）
 - 打开终端能连 SSH → WebSocket 升级头配置正确
 - `rz`/`sz` 传大文件不断 → `proxy_read_timeout 3600s` 生效
+- 文件管理器上传大文件成功 → `client_max_body_size` 已放宽
 
 # 7. WebSSH相关项目推荐
 
