@@ -32,8 +32,8 @@
 
 | 层面       | 技术                           |
 | ---------- | ------------------------------ |
-| 后端       | Spring Boot 2.3.x ~ 4.0.x（多版本适配）|
-| JDK        | Java 8+（2.x starter）/ Java 17+（3.x/4.x starter）|
+| 后端       | Spring Boot 3.0.x ~ 4.0.x      |
+| JDK        | Java 17+                       |
 | SSH 客户端 | JSch（com.github.mwiede:jsch） |
 | 通信       | WebSocket                      |
 | 前端终端   | xterm.js 5.5.0                 |
@@ -41,23 +41,21 @@
 
 ### 多版本适配方案
 
-采用 **共享 core + 多 starter** 架构，一套代码支持 Spring Boot 2.3 ~ 4.0 全系列：
+采用 **共享 core + starter** 架构，一套代码支持 Spring Boot 3.0 ~ 4.0 全系列：
 
 ```
 Spring Boot 版本    │ 推荐使用                           │ 编译基线
 ────────────────────┼──────────────────────────────────┼──────────────────────────
-2.3 ~ 2.7           │ yyj-webssh-spring-boot2-starter  │ SB 2.3.12 + Java 8
 3.0 ~ 3.5           │ yyj-webssh-spring-boot3-starter  │ SB 3.0.12 + Java 17
 4.0                 │ yyj-webssh-spring-boot3-starter  │ SB 3.0.12 + Java 17（前向兼容）
 ────────────────────┴──────────────────────────────────┴──────────────────────────
 共享核心           │ yyj-webssh-core                    │ SB 2.3.12 + Java 8（servlet-free）
 ```
 
-- **2.x starter**：使用 `javax.servlet` + `spring.factories`，Java 8 字节码
 - **3.x/4.x starter**：使用 `jakarta.servlet` + `AutoConfiguration.imports`，Java 17 字节码
-- **core 模块**：servlet-free，所有版本通用的 SSH/PTY/RSA 业务逻辑
+- **core 模块**：servlet-free，与 Servlet API 解耦的 SSH/PTY/RSA 业务逻辑
 
-> **版本号策略**：core 的版本号独立于 starter 演进。core 1.0.0 是共享核心的首发版本，被 starter-2x 2.0.0 与 starter-3x 3.0.0 同时依赖，并非"旧版"。starter 版本号首位对应所适配的 Spring Boot 大版本（2.x / 3.x）。
+> **版本号策略**：core 的版本号独立于 starter 演进。core 1.0.1 是核心模块当前版本，被 starter-3x 3.0.0 依赖。starter 版本号首位对应所适配的 Spring Boot 大版本（3.x）。
 
 # 3. 项目结构
 
@@ -71,7 +69,7 @@ webssh/                                                # 父 POM (java=21, sb=4.
 │       ├── util/RsaUtil.java                         # RSA 工具（servlet-free 版本）
 │       └── security/LoginAttemptService.java          # 登录限制服务（IP 由调用方传入）
 │
-├── yyj-webssh-spring-boot3-starter/                # spring-boot3-starter（SB 3.0~4.0, java=17, sb=3.0.12）
+├── yyj-webssh-spring-boot3-starter/                   # spring-boot3-starter（SB 3.0~4.0, java=17, sb=3.0.12）
 │   └── src/main/
 │       ├── java/com/webssh/
 │       │   ├── config/WebSshAutoConfiguration.java   # 自动配置类
@@ -83,14 +81,6 @@ webssh/                                                # 父 POM (java=21, sb=4.
 │           ├── resources/webssh/                     # 前端页面（HTML/CSS/JS/xterm）
 │           ├── webssh-logback-template.xml           # 日志配置模板（不自动加载，供集成方复制）
 │           └── spring/                               # AutoConfiguration.imports
-│
-├── yyj-webssh-spring-boot2-starter/                # spring-boot2-starter（SB 2.3~2.7, java=8, sb=2.3.12）
-│   └── src/main/
-│       ├── java/com/webssh/                          # 与默认 starter 同名同结构（import javax.servlet）
-│       └── resources/META-INF/
-│           ├── resources/webssh/                     # 前端页面（同上）
-│           ├── webssh-logback-template.xml           # 日志配置模板（不自动加载，供集成方复制）
-│           └── spring.factories                      # SB 2.x 自动装配入口
 │
 └── webssh-app/                                       # 示例应用（SB 4.0.6 + Java 21，可直接运行）
     └── src/main/
@@ -111,9 +101,8 @@ mvn clean install -DskipTests
 ```
 
 构建产物：
-- `yyj-webssh-core/target/yyj-webssh-core-1.0.0.jar` — 共享核心制品
+- `yyj-webssh-core/target/yyj-webssh-core-1.0.1.jar` — 共享核心制品
 - `yyj-webssh-spring-boot3-starter/target/yyj-webssh-spring-boot3-starter-3.0.0.jar` — spring-boot3-starter 制品（SB 3.x/4.x）
-- `yyj-webssh-spring-boot2-starter/target/yyj-webssh-spring-boot2-starter-2.0.0.jar` — spring-boot2-starter 制品（SB 2.x）
 - `webssh-app/target/webssh-app.jar` — 可直接运行的示例应用（SB 4.0.6）
 
 ## 4.2 运行示例应用
@@ -128,17 +117,15 @@ java -jar webssh-app/target/webssh-app.jar
 
 **步骤一：根据 Spring Boot 版本选择对应的 starter**
 
-| 你的 Spring Boot 版本 | 依赖 artifactId              | JDK 要求 |
-|------------------------|------------------------------|----------|
-| 2.3.x ~ 2.7.x          | `yyj-webssh-spring-boot2-starter` | Java 8+  |
-| 3.0.x ~ 3.5.x          | `yyj-webssh-spring-boot3-starter` | Java 17+ |
-| 4.0.x                  | `yyj-webssh-spring-boot3-starter` | Java 17+ |
+| 你的 Spring Boot 版本 | 依赖 artifactId                   | JDK 要求 |
+|------------------------|-----------------------------------|----------|
+| 3.0.x ~ 4.0.x          | `yyj-webssh-spring-boot3-starter` | Java 17+ |
 
-> **判断依据**：SB 2.x 使用 `javax.servlet`，SB 3.x/4.x 使用 `jakarta.servlet`，命名空间不同需选用对应 starter。
+> **注意**：Spring Boot 2.x（`javax.servlet` 命名空间）不在支持范围内，请先升级至 SB 3.x+（`jakarta.servlet`）后再接入。
 
 **步骤二：添加 Maven 依赖**
 
-> **必读**：`yyj-webssh-core` 是 WebSSH 的共享核心模块（包含 SSH/PTY/本地文件/RSA/登录限制等业务逻辑），与 starter 是**两个独立版本号**的制品（core 1.0.0、starter-2x 2.0.0、starter-3x 3.0.0）。引入 starter 时**必须同时引入 core**，二者缺一不可。
+> **必读**：`yyj-webssh-core` 是 WebSSH 的共享核心模块（包含 SSH/PTY/本地文件/RSA/登录限制等业务逻辑），与 starter 是**两个独立版本号**的制品（core 1.0.1、starter-3x 3.0.0）。引入 starter 时**必须同时引入 core**，二者缺一不可。
 
 以 Spring Boot 3.x/4.x 项目为例：
 
@@ -173,43 +160,6 @@ java -jar webssh-app/target/webssh-app.jar
     </dependency>
 </dependencies>
 ```
-
-若是 Spring Boot 2.x 项目，将`starter`的`artifactId`替换为 `yyj-webssh-spring-boot2-starter`，版本号改为 `2.0.0`，`core`保持不变：
-
-```xml
-<dependencyManagement>
-    <dependencies>
-        <!-- WebSSH 共享核心（必选） -->
-        <dependency>
-            <groupId>io.github.youngyajun</groupId>
-            <artifactId>yyj-webssh-core</artifactId>
-            <version>1.0.1</version>
-        </dependency>
-        <!-- WebSSH Spring Boot 2.x Starter（必选） -->
-        <dependency>
-            <groupId>io.github.youngyajun</groupId>
-            <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
-            <version>2.0.0</version>
-        </dependency>
-    </dependencies>
-</dependencyManagement>
-
-<dependencies>
-    <!-- WebSSH 共享核心（必选） -->
-    <dependency>
-        <groupId>io.github.youngyajun</groupId>
-        <artifactId>yyj-webssh-core</artifactId>
-    </dependency>
-    <!-- WebSSH Spring Boot 2.x Starter（必选） -->
-    <dependency>
-        <groupId>io.github.youngyajun</groupId>
-        <artifactId>yyj-webssh-spring-boot2-starter</artifactId>
-    </dependency>
-</dependencies>
-```
-
-> **依赖说明**：
-> - `yyj-webssh-core` 与 `yyj-webssh-spring-boot*-starter` 必须同时引入，二者缺一不可
 
 **步骤三：配置 `application-webssh.yml`**
 
@@ -358,7 +308,7 @@ spring:
 
 **步骤五：启动应用**
 
-正常启动`Spring Boot`应用即可，Starter 会自动装配（默认 starter 通过 `AutoConfiguration.imports`，spring-boot2-starter 通过 `spring.factories`），无需额外注解或配置类。
+正常启动`Spring Boot`应用即可，Starter 会通过 `AutoConfiguration.imports` 自动装配，无需额外注解或配置类。
 
 访问 `http://your-host:port/webssh/login.html`，使用 `webssh.username` / `webssh.password` 登录后选择主机连接。
 
@@ -495,27 +445,7 @@ mv META-INF/webssh-logback-template.xml src/main/resources/logback-spring.xml
 
 > **说明**：WebSSH Starter 内部已自带登录鉴权（基于 `webssh.username` / `webssh.password` + RSA 加密 + IP 锁定 + 登录失败计数）。放行后 WebSSH 仍会走自身登录流程，不会"裸奔"。无需在 Spring Security 侧重复鉴权。
 
-### 5.5.1 Spring Boot 2.x（Spring Security 5.x，`javax`）
-
-```java
-@Configuration
-@EnableWebSecurity
-public class SecurityConfig extends WebSecurityConfigurerAdapter {
-
-    @Override
-    protected void configure(HttpSecurity http) throws Exception {
-        http
-            .authorizeRequests()
-                .antMatchers("/webssh/**").permitAll()
-                .anyRequest().authenticated()
-                .and()
-            // 关闭 CSRF，否则登录 POST /webssh/auth/login 会被拦截返回 403
-            .csrf().disable();
-    }
-}
-```
-
-### 5.5.2 Spring Boot 3.x / 4.x（Spring Security 6.x，`jakarta`）
+### 5.5.1 Spring Boot 3.x / 4.x（Spring Security 6.x，`jakarta`）
 
 Spring Security 6 已移除 `WebSecurityConfigurerAdapter`，改用 `SecurityFilterChain` Bean：
 
@@ -544,7 +474,7 @@ public class SecurityConfig {
 }
 ```
 
-### 5.5.3 注意事项
+### 5.5.2 注意事项
 
 1. **CSRF 必须关闭或针对 `/webssh/**` 排除**：WebSSH 登录走 `POST /webssh/auth/login`，开启 CSRF 后会被拦截返回 403
 2. **`context-path` 自定义**：若通过 `webssh.context-path` 修改了前缀（如 `/myapp/webssh`），需将上例中的 `/webssh/**` 同步替换
