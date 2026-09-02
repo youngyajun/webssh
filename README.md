@@ -667,7 +667,7 @@ WebSSH 后端存在多处 `response.sendRedirect(...)`（如 `/webssh` → `/web
 
 ### 6.4.6 精简配置（HTTP、非默认端口）
 
-如果站点没有 HTTPS（例如内网 `http://example.com:9001/webssh`），也可以用单个 `location` 覆盖全部路径，WebSocket 升级头在同一个 `location` 内同样生效：
+如果站点没有 HTTPS（例如内网 `http://example.com:9001/webssh`），也可以用单个 `location` 覆盖全部路径，WebSocket 升级头在同一个 `location` 内同样生效；假设`webssh`部署`ip`为：`192.168.1.166`，启用端口为：`9022`，参考配置如下：
 
 ```nginx
 server {
@@ -681,7 +681,7 @@ server {
     # /webssh/js/**、/webssh/images/** 等请求（见 6.4.1）
     location ^~ /webssh {
         # 末尾不能加 /，避免 URI 被改写（见 6.2 关键约束）
-        proxy_pass http://127.0.0.1:9022;
+        proxy_pass http://192.168.1.166:9022;
 
         proxy_http_version 1.1;
 
@@ -695,12 +695,13 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # 后端返回的 Location 重定向地址交给浏览器时，按当前 server 重写
-        proxy_redirect http://127.0.0.1:9022/ /;
+        proxy_redirect http://192.168.1.166:9022/ /;
         # 域名指向但端口不对的绝对地址也重写为相对路径
         proxy_redirect ~^https?://example\.com(?::\d+)?/(.*)$ /$1;
 
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_buffering     off;
     }
 }
 ```
