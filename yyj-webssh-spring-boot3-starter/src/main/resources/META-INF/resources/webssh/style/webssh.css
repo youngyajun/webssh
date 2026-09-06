@@ -83,6 +83,10 @@ body[data-theme="light"] {
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 ::-webkit-scrollbar-corner { background: transparent; }
+/* xterm 6.0.0 起改用自定义滚动条组件（.xterm-scrollable-element），.xterm-viewport 不再承担滚动；
+   但 xterm.css 仍保留 overflow-y:scroll 与 background:#000，会多余渲染原生滚动条（底部黑条+▼箭头）
+   且 viewport 背景纯黑会在终端未填满容器时露出黑色横条，此处一并隐藏。 */
+.xterm .xterm-viewport { overflow: hidden; background: transparent; }
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
     background: var(--bg-base);

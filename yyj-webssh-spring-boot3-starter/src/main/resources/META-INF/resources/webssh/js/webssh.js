@@ -7,6 +7,31 @@
 const contextPath = window.location.pathname.replace(/\/[^/]*$/, '');
 
 /**
+ * 校验 JSEncrypt 是否真正加载了服务端下发的 RSA 公钥
+ *
+ * setPublicKey() 没有返回值：传入空/假值时不会报错，而是等到 getKey() 时静默新建一把
+ * 随机的 1024 位密钥，此后 encrypt() 会返回一段长度正常、但后端对应私钥无法解开的密文
+ * （jsencrypt 3.3.2 及更早版本在此场景会返回 false，3.5.x 不会）。
+ * 因此不能只依赖 encrypt() 的返回值，需回读已加载的公钥与服务端下发内容做比对，
+ * 确保参与加密的模数确实是服务端持有私钥的那一把。
+ *
+ * @param {JSEncrypt} encrypt 已调用 setPublicKey 的实例
+ * @param {string} expectedKey 服务端下发的公钥（PEM 或裸 Base64）
+ * @returns {boolean} 公钥一致且可正常序列化时返回 true
+ */
+function isPublicKeyLoaded(encrypt, expectedKey) {
+    const normalize = (key) => (key || '').replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+    let loaded;
+    try {
+        loaded = normalize(encrypt.getPublicKeyB64());
+    } catch (e) {
+        // 公钥解析失败时模数为 null，序列化会抛异常
+        return false;
+    }
+    return !!loaded && loaded === normalize(expectedKey);
+}
+
+/**
  * 获取 RSA 公钥并加密密码
  * 每次调用都从后端获取新的公钥（私钥一次性使用），与登录页流程一致
  * @param password 明文密码
@@ -23,6 +48,8 @@ async function encryptPassword(password) {
         const pemKey = '-----BEGIN PUBLIC KEY-----\n' + pemBody + '\n-----END PUBLIC KEY-----';
         const encrypt = new JSEncrypt();
         encrypt.setPublicKey(pemKey);
+        // 回读校验，确保加密所用的公钥就是服务端持有私钥的那一把
+        if (!isPublicKeyLoaded(encrypt, pemKey)) return null;
         const encrypted = encrypt.encrypt(password);
         if (!encrypted) return null;
         return { encrypted: encrypted, keyId: data.keyId };

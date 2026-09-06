@@ -36,7 +36,7 @@
 | JDK        | Java 17+                       |
 | SSH 客户端 | JSch（com.github.mwiede:jsch） |
 | 通信       | WebSocket                      |
-| 前端终端   | xterm.js 5.5.0                 |
+| 前端终端   | xterm.js 6.0.0                 |
 | 构建       | Maven 多模块                   |
 
 ### 多版本适配方案
