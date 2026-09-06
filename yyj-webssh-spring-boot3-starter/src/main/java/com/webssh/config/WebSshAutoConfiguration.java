@@ -23,6 +23,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
+import org.springframework.http.CacheControl;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
@@ -132,8 +133,13 @@ public class WebSshAutoConfiguration {
                 if (!contextPath.endsWith("/")) {
                     contextPath = contextPath + "/";
                 }
+                // 不配置缓存策略时，浏览器会按 Last-Modified 启发式缓存静态资源：
+                // 更新 css/js 后旧副本可能在缓存有效期内不回源校验，与新文件（如改名后的
+                // xterm-6.0.0.css）混用产生样式异常（如终端底部黑条）。
+                // no-cache：允许缓存但每次加载必须回源校验，未变化时返回 304，兼顾性能与更新即时生效。
                 registry.addResourceHandler(contextPath + "**")
-                        .addResourceLocations("classpath:/META-INF/resources/webssh/");
+                        .addResourceLocations("classpath:/META-INF/resources/webssh/")
+                        .setCacheControl(CacheControl.noCache());
             }
 
             @Override
