@@ -306,7 +306,7 @@ public class LocalPtyService {
         if (pty == null) {
             return;
         }
-        WebSocketSession asyncSession = new ConcurrentWebSocketSessionDecorator(webSocketSession, 0, 10 * 1024 * 1024);
+        WebSocketSession asyncSession = new ConcurrentWebSocketSessionDecorator(webSocketSession, 0, 1024 * 1024);
         InputStream inputStream = pty.getInputStream();
         byte[] buffer = new byte[8192];
         int i;

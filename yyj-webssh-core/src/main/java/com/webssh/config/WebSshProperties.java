@@ -61,17 +61,25 @@ public class WebSshProperties {
     private String charset = "UTF-8";
 
     /**
-     * SSH 主机密钥校验策略：yes（严格校验，需配合 knownHosts）、no（不校验，存在中间人攻击风险）
-     * 默认 no 以兼容内网开发场景（避免 known_hosts 中旧记录导致连接失败），
-     * 生产环境强烈建议设为 yes 并配置 knownHosts 以防中间人攻击
+     * SSH 主机密钥严格校验（对应 JSch 的 StrictHostKeyChecking）。默认开启，避免凭据和终端数据遭受中间人攻击。
+     * 设为 false 时不校验主机密钥，存在中间人攻击风险，仅建议内网/测试环境使用。
      */
-    private String hostKeyVerification = "no";
+    private boolean strictHostKeyChecking = true;
 
     /**
-     * known_hosts 文件路径（当 hostKeyVerification=yes 时使用）
+     * known_hosts 文件路径（当 strict-host-key-checking=true 时使用）
      * 默认使用用户目录下的 ~/.ssh/known_hosts
      */
     private String knownHosts;
+
+    /**
+     * 允许发起 WebSocket 握手的浏览器 Origin 白名单。
+     * 必须由部署者显式配置，不能使用通配符。
+     */
+    private List<String> allowedOrigins = new ArrayList<>();
+
+    /** WebSocket 空闲超时（毫秒），默认 30 分钟。 */
+    private long webSocketIdleTimeoutMillis = 30 * 60 * 1000L;
 
     /**
      * SSH 主机列表（可配置多个Linux服务器）
@@ -284,12 +292,12 @@ public class WebSshProperties {
         this.charset = charset;
     }
 
-    public String getHostKeyVerification() {
-        return hostKeyVerification;
+    public boolean isStrictHostKeyChecking() {
+        return strictHostKeyChecking;
     }
 
-    public void setHostKeyVerification(String hostKeyVerification) {
-        this.hostKeyVerification = hostKeyVerification;
+    public void setStrictHostKeyChecking(boolean strictHostKeyChecking) {
+        this.strictHostKeyChecking = strictHostKeyChecking;
     }
 
     public String getKnownHosts() {
@@ -298,6 +306,22 @@ public class WebSshProperties {
 
     public void setKnownHosts(String knownHosts) {
         this.knownHosts = knownHosts;
+    }
+
+    public List<String> getAllowedOrigins() {
+        return allowedOrigins;
+    }
+
+    public void setAllowedOrigins(List<String> allowedOrigins) {
+        this.allowedOrigins = allowedOrigins == null ? new ArrayList<>() : new ArrayList<>(allowedOrigins);
+    }
+
+    public long getWebSocketIdleTimeoutMillis() {
+        return webSocketIdleTimeoutMillis;
+    }
+
+    public void setWebSocketIdleTimeoutMillis(long webSocketIdleTimeoutMillis) {
+        this.webSocketIdleTimeoutMillis = webSocketIdleTimeoutMillis;
     }
 
     public List<Host> getHosts() {

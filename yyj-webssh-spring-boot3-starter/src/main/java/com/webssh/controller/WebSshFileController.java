@@ -123,6 +123,12 @@ public class WebSshFileController {
             sessionId = params.get("sessionId");
         }
         if (sessionId != null && !sessionId.isEmpty()) {
+            sessionId = resolveSessionId(sessionId, session);
+            if (sessionId == null) {
+                result.put("code", 403);
+                result.put("msg", "无权操作该文件会话");
+                return result;
+            }
             sshService.closeFileSession(sessionId);
             // 从追踪集合中移除
             untrackFileSession(session, sessionId);
@@ -187,6 +193,7 @@ public class WebSshFileController {
         Map<String, Object> result = new HashMap<>();
         ChannelSftp sftp = null;
         try {
+            sessionId = resolveSessionId(sessionId, httpSession);
             if (sessionId == null || sessionId.isEmpty()) {
                 result.put("code", 401);
                 result.put("msg", "请先建立SSH连接");
@@ -308,6 +315,7 @@ public class WebSshFileController {
     public Map<String, Object> resolveCwd(@RequestBody Map<String, String> params, HttpSession httpSession) {
         Map<String, Object> result = new HashMap<>();
         String sessionId = params.get("sessionId");
+        sessionId = resolveSessionId(sessionId, httpSession);
         if (sessionId == null || sessionId.isEmpty()) {
             result.put("code", 401);
             result.put("msg", "请先建立SSH连接");
@@ -354,6 +362,7 @@ public class WebSshFileController {
         Map<String, Object> result = new HashMap<>();
         ChannelSftp sftp = null;
         try {
+            sessionId = resolveSessionId(sessionId, httpSession);
             if (sessionId == null || sessionId.isEmpty()) {
                 result.put("code", 401);
                 result.put("msg", "请先建立SSH连接");
@@ -452,6 +461,7 @@ public class WebSshFileController {
         Map<String, Object> result = new HashMap<>();
         ChannelSftp sftp = null;
         try {
+            sessionId = resolveSessionId(sessionId, httpSession);
             if (sessionId == null || sessionId.isEmpty()) {
                 result.put("code", 401);
                 result.put("msg", "请先建立SSH连接");
@@ -543,6 +553,7 @@ public class WebSshFileController {
         Map<String, Object> result = new HashMap<>();
         ChannelSftp sftp = null;
         try {
+            sessionId = resolveSessionId(sessionId, httpSession);
             if (sessionId == null || sessionId.isEmpty()) {
                 result.put("code", 401);
                 result.put("msg", "请先建立SSH连接");
@@ -1082,10 +1093,15 @@ public class WebSshFileController {
     }
 
     /**
-     * 解析 sessionId（直接返回前端传参，多标签场景下不再回退到 HttpSession 单值）
+     * 验证文件会话属于当前 HTTP 会话。会话 ID 不是授权凭据，不能跨用户复用。
      */
+    @SuppressWarnings("unchecked")
     private String resolveSessionId(String sessionId, HttpSession httpSession) {
-        return sessionId;
+        if (sessionId == null || sessionId.isEmpty() || httpSession == null) {
+            return null;
+        }
+        Set<String> all = (Set<String>) httpSession.getAttribute("allFileSessions");
+        return all != null && all.contains(sessionId) ? sessionId : null;
     }
 
     /**
@@ -1128,6 +1144,7 @@ public class WebSshFileController {
         Map<String, Object> result = new HashMap<>();
         ChannelSftp sftp = null;
         try {
+            sessionId = resolveSessionId(sessionId, httpSession);
             if (sessionId == null || sessionId.isEmpty()) {
                 result.put("code", 401);
                 result.put("msg", "请先建立SSH连接");
@@ -1217,6 +1234,8 @@ public class WebSshFileController {
         Map<String, Object> result = new HashMap<>();
         String sessionId = params.get("sessionId");
         String command = params.get("command");
+
+        sessionId = resolveSessionId(sessionId, httpSession);
 
         if (sessionId == null || sessionId.isEmpty()) {
             result.put("code", 401);

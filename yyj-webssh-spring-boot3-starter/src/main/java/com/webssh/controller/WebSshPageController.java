@@ -2,6 +2,7 @@ package com.webssh.controller;
 
 import com.webssh.config.WebSshProperties;
 import com.webssh.ssh.SshService;
+import com.webssh.websocket.WebSshWebSocketHandler;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,9 @@ public class WebSshPageController {
     @Autowired
     private SshService sshService;
 
+    @Autowired
+    private WebSshWebSocketHandler webSshWebSocketHandler;
+
     /**
      * 访问 /webssh 重定向到 /webssh/index.html
      */
@@ -41,8 +45,8 @@ public class WebSshPageController {
     public void logout(HttpSession session, HttpServletResponse response) throws IOException {
         // 清理所有文件管理会话（多标签场景），避免 SSH 连接泄漏
         WebSshFileController.closeAllFileSessions(session, sshService);
-        session.removeAttribute("webssh_logged_in");
-        session.removeAttribute("webssh_user");
+        webSshWebSocketHandler.closeSessionsForHttpSession(session.getId());
+        session.invalidate();
         // 使用相对路径重定向，兼容开发环境代理前缀（如 /dev-api）
         response.sendRedirect("login.html");
     }

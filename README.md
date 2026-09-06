@@ -84,7 +84,7 @@ webssh/                                                # 父 POM (java=21, sb=4.
 │
 └── webssh-app/                                       # 示例应用（SB 4.0.6 + Java 21，可直接运行）
     └── src/main/
-        ├── java/com/yyj/                              # 启动类（启动后自动打开浏览器）
+        ├── java/com/yyj/                              # 启动类（启动后控制台输出访问地址）
         └── resources/
             ├── application.yml                        # 端口、上传限制等
             ├── application-webssh.yml                 # WebSSH 配置 + 日志配置（logging 节点）
@@ -111,7 +111,7 @@ mvn clean install -DskipTests
 java -jar webssh-app/target/webssh-app.jar
 ```
 
-启动后自动打开浏览器访问登录页，也可手动访问 `http://localhost:8080/webssh/login.html`。
+启动后控制台输出访问地址，手动访问 `http://localhost:8080/webssh/login.html` 即可打开登录页。
 
 ## 4.3 接入已有 Spring Boot 项目
 
@@ -195,10 +195,14 @@ webssh:
   terminal-type: xterm-256color
   # 字符编码
   charset: UTF-8
-  # 主机密钥校验：yes=严格校验（推荐生产环境），no=不校验（默认）
-  host-key-verification: no
-  # known_hosts 路径（host-key-verification=yes 时使用）
-  # known-hosts: ~/.ssh/known_hosts
+  # 主机密钥严格校验。true 时 known_hosts 不存在或不可读会导致连接被拒绝；
+  # false 时不校验主机密钥，存在中间人攻击风险，仅建议内网/测试环境使用
+  strict-host-key-checking: true
+  # 部署时通过环境变量提供可信主机指纹文件
+  known-hosts: ${WEBSSH_KNOWN_HOSTS:}
+  # 仅允许实际部署站点发起 WebSocket 握手；生产环境务必覆盖为 HTTPS 域名
+  allowed-origins: ${WEBSSH_ALLOWED_ORIGINS:http://localhost:8080}
+  websocket-idle-timeout-millis: 1800000
 
 
   # ============================================================================
@@ -226,11 +230,9 @@ webssh:
   #   - 两者均未配置时不阻止启动，仅告警（登录将全部失败）
   # ============================================================================
 
-  # WebSSH 管理界面登录账号（单账号模式，无默认值，启动时校验）
-  username: webssh
-  # WebSSH 管理界面登录密码（单账号模式，无默认值，须符合上方强度规则）
-  # 注意：默认值 "webssh" 不符合强度规则，会被判为无效账号无法登录，请务必修改
-  password: Webssh-2026
+  # 不要在版本库中提交管理口令。部署时从环境变量或密钥管理服务注入：
+  # username: ${WEBSSH_USERNAME:}
+  # password: ${WEBSSH_PASSWORD:}
 
   # 多账号列表（与 username/password 共存；用户名冲突时以多账号为准）
   accounts: [
@@ -323,8 +325,10 @@ spring:
 | `webssh.timeout` | `5000` | SSH 连接超时（毫秒） |
 | `webssh.terminal-type` | `xterm` | 终端类型 |
 | `webssh.charset` | `UTF-8` | 字符编码 |
-| `webssh.host-key-verification` | `no` | 主机密钥校验（`yes`/`no`） |
-| `webssh.known-hosts` | `~/.ssh/known_hosts` | known_hosts 文件路径 |
+| `webssh.strict-host-key-checking` | `true` | SSH 主机密钥严格校验；`false` 时关闭（存在中间人攻击风险） |
+| `webssh.known-hosts` | `~/.ssh/known_hosts` | 可信主机指纹文件；缺失或不可读时拒绝连接 |
+| `webssh.allowed-origins` | 无（必填） | 允许 WebSocket 握手的浏览器 Origin 白名单，不可使用 `*` |
+| `webssh.websocket-idle-timeout-millis` | `1800000` | WebSocket 空闲超时（毫秒） |
 | `webssh.hosts` | 空 | SSH 主机列表 |
 | `webssh.high-risk-commands` | 空 | 高风险命令正则列表 |
 | `webssh.login-security.max-fail-attempts` | `5` | 最大登录失败次数 |
@@ -433,11 +437,11 @@ mv META-INF/webssh-logback-template.xml src/main/resources/logback-spring.xml
 
 ## 5.4 安全建议
 
-1. **修改默认凭据**：`webssh.username` 和 `webssh.password` 无默认值，启动时强制校验，请使用强密码
-2. **生产环境开启主机密钥校验**：设置 `host-key-verification: yes` 并配置 `known-hosts`
-3. **配置高风险命令拦截**：根据团队规范添加正则规则，防止误操作
-4. **反代场景注意 IP 识别**：使用 Nginx 时设置 `trust-forwarded-for: true` 以识别真实客户端 IP
-5. **使用 HTTPS**：通过反向代理启用 TLS，保护 WebSocket 和登录凭据传输
+1. **通过密钥管理服务或环境变量注入凭据**：切勿把 `webssh.username`、`webssh.password` 或 SSH 凭据提交到仓库。
+2. **配置可信主机指纹**：`strict-host-key-checking` 默认为 `true`；生产环境必须提供匹配的 `known-hosts`，切勿设为 `false`。
+3. **设置精确的 WebSocket Origin 白名单**：生产环境配置实际的 HTTPS 域名，绝不使用 `*`。
+4. **高风险命令规则只用于防误操作**：真正的权限控制应由 SSH 账号、sudo 和主机侧策略实施。
+5. **使用 HTTPS**：通过反向代理启用 TLS，保护 WebSocket、Cookie 和登录凭据传输。
 
 ## 5.5 集成 Spring Security（可选）
 

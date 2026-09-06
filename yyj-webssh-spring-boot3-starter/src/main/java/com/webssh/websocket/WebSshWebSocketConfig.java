@@ -22,6 +22,7 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 import org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean;
 
 import java.util.Map;
+import java.util.List;
 
 /**
  * WebSocket 配置
@@ -46,15 +47,15 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
      * 配置 WebSocket 容器的缓冲区大小和会话超时
      * 默认 maxBinaryMessageBufferSize=8KB 太小，ZMODEM rz/sz 大文件传输时
      * 单条二进制消息可能远超 8KB，会触发 close code 1009 强制断连。
-     * 调大到 10MB 以支持大文件传输；sessionIdleTimeout=0 表示不超时
-     * （ZMODEM 大文件传输耗时长，避免被 idle 检查误杀）
+     * 提升到 1MB 以支持常规文件传输帧，同时限制单连接内存占用。空闲超时由配置控制，避免失效认证的
+     * WebSocket 长期占用连接和服务器资源。
      */
     @Bean
     public ServletServerContainerFactoryBean createWebSocketContainer() {
         ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
-        container.setMaxBinaryMessageBufferSize(10 * 1024 * 1024);
-        container.setMaxTextMessageBufferSize(1 * 1024 * 1024);
-        container.setMaxSessionIdleTimeout(0L);
+        container.setMaxBinaryMessageBufferSize(1024 * 1024);
+        container.setMaxTextMessageBufferSize(64 * 1024);
+        container.setMaxSessionIdleTimeout(properties.getWebSocketIdleTimeoutMillis());
         return container;
     }
 
@@ -64,10 +65,17 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
             return;
         }
 
+        List<String> allowedOrigins = properties.getAllowedOrigins();
+        if (allowedOrigins == null || allowedOrigins.isEmpty()
+                || allowedOrigins.stream().anyMatch(origin -> "*".equals(origin))) {
+            log.error("WebSSH: 未配置安全的 webssh.allowed-origins，WebSocket 通道已禁用");
+            return;
+        }
+
         String wsPath = properties.getContextPath() + "/ws";
         registry.addHandler(webSshWebSocketHandler, wsPath)
                 .addInterceptors(new WebSshHandshakeInterceptor())
-                .setAllowedOrigins("*");
+                .setAllowedOrigins(allowedOrigins.toArray(new String[0]));
     }
 
     /**
@@ -93,6 +101,7 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
                     log.warn("WebSSH: WebSocket 握手被拒绝，未登录或会话已过期");
                     return false;
                 }
+                attributes.put("websshHttpSessionId", httpSession.getId());
 
                 String host = servletRequest.getParameter("host");
                 if (host != null && !host.isEmpty()) {

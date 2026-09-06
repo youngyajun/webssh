@@ -8,6 +8,7 @@ import com.webssh.security.LoginAttemptService;
 import com.webssh.ssh.SshService;
 import com.webssh.util.RsaSessionHelper;
 import com.webssh.util.RsaUtil;
+import com.webssh.websocket.WebSshWebSocketHandler;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
@@ -44,6 +45,9 @@ public class WebSshAuthController {
 
     @Autowired
     private ImageCaptchaApplication imageCaptchaApplication;
+
+    @Autowired
+    private WebSshWebSocketHandler webSshWebSocketHandler;
 
     /**
      * 获取 RSA 公钥
@@ -138,6 +142,8 @@ public class WebSshAuthController {
         if (authenticate(username, password)) {
             // 登录成功，清除失败记录
             loginAttemptService.recordSuccess(clientIp);
+            // 防止攻击者预先固定 JSESSIONID 后诱导用户登录。
+            request.changeSessionId();
             session.setAttribute("webssh_logged_in", true);
             session.setAttribute("webssh_user", username);
             result.put("code", 200);
@@ -204,8 +210,8 @@ public class WebSshAuthController {
         Map<String, Object> result = new HashMap<>();
         // 清理所有文件管理会话（多标签场景），避免 SSH 连接泄漏
         WebSshFileController.closeAllFileSessions(session, sshService);
-        session.removeAttribute("webssh_logged_in");
-        session.removeAttribute("webssh_user");
+        webSshWebSocketHandler.closeSessionsForHttpSession(session.getId());
+        session.invalidate();
         result.put("code", 200);
         result.put("msg", "登出成功");
         return result;

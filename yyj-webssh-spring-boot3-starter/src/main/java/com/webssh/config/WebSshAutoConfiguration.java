@@ -15,6 +15,9 @@ import com.webssh.websocket.WebSshWebSocketConfig;
 import com.webssh.websocket.WebSshWebSocketHandler;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.servlet.http.HttpSessionEvent;
+import jakarta.servlet.http.HttpSessionListener;
+import org.springframework.boot.web.servlet.ServletListenerRegistrationBean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -91,6 +94,20 @@ public class WebSshAutoConfiguration {
     @Bean
     public SshService sshService() {
         return new SshService();
+    }
+
+    /** 会话自然过期时同样关闭终端，避免认证状态已失效但 Shell 仍可使用。 */
+    @Bean
+    public ServletListenerRegistrationBean<HttpSessionListener> webSshSessionListener(
+            WebSshWebSocketHandler webSshWebSocketHandler, SshService sshService) {
+        HttpSessionListener listener = new HttpSessionListener() {
+            @Override
+            public void sessionDestroyed(HttpSessionEvent event) {
+                WebSshFileController.closeAllFileSessions(event.getSession(), sshService);
+                webSshWebSocketHandler.closeSessionsForHttpSession(event.getSession().getId());
+            }
+        };
+        return new ServletListenerRegistrationBean<>(listener);
     }
 
     /**
@@ -214,54 +231,4 @@ public class WebSshAutoConfiguration {
         }
     }
 
-    @PostConstruct
-    public void logAccessUrl() {
-        String url;
-        try {
-            String port = environment.getProperty("server.port", "8080");
-            String websshContextPath = normalizeContextPath(properties.getContextPath());
-            String ip = getLocalIp();
-            url = String.format("http://%s:%s%s/login.html", ip, port, websshContextPath);
-        } catch (Exception e) {
-            log.warn("构造 WebSSH 访问地址失败，回退到 localhost：{}", e.getMessage());
-            url = "http://127.0.0.1:8080/webssh/login.html";
-        }
-        log.info("WebSSH 访问地址：{}", url);
-    }
-
-    private static String normalizeContextPath(String contextPath) {
-        if (contextPath == null || contextPath.isEmpty()) {
-            return "";
-        }
-        if (!contextPath.startsWith("/")) {
-            contextPath = "/" + contextPath;
-        }
-        if (contextPath.endsWith("/")) {
-            contextPath = contextPath.substring(0, contextPath.length() - 1);
-        }
-        return contextPath;
-    }
-
-    private static String getLocalIp() {
-        try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            while (interfaces != null && interfaces.hasMoreElements()) {
-                NetworkInterface ni = interfaces.nextElement();
-                if (!ni.isUp() || ni.isLoopback()) {
-                    continue;
-                }
-                Enumeration<InetAddress> addresses = ni.getInetAddresses();
-                while (addresses.hasMoreElements()) {
-                    InetAddress addr = addresses.nextElement();
-                    if (!addr.isLoopbackAddress() && addr.getAddress().length == 4) {
-                        return addr.getHostAddress();
-                    }
-                }
-            }
-            return InetAddress.getLocalHost().getHostAddress();
-        } catch (Exception e) {
-            log.warn("获取本机 IP 失败，回退到 127.0.0.1：{}", e.getMessage());
-            return "127.0.0.1";
-        }
-    }
 }

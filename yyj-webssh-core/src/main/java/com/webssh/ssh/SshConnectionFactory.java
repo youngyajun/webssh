@@ -6,6 +6,9 @@ import com.webssh.config.WebSshProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Properties;
 
 /**
@@ -63,27 +66,25 @@ public class SshConnectionFactory {
 
         log.info("WebSSH: 正在连接 {}@{}:{}", username, host.getHost(), host.getPort());
 
-        // 主机密钥校验策略：默认 no（兼容内网开发），用户可配置为 yes 开启严格校验
-        String hostKeyVerification = properties.getHostKeyVerification();
-        if (hostKeyVerification == null || hostKeyVerification.isEmpty()) {
-            hostKeyVerification = "no";
-        }
-
-        // 仅在开启严格校验时才加载 known_hosts；
-        // 关闭校验时不加载，避免 known_hosts 中旧记录与服务器当前密钥不匹配时抛 JSchChangedHostKeyException
-        if ("yes".equalsIgnoreCase(hostKeyVerification)) {
+        // 主机密钥严格校验。关闭校验会让 SSH 凭据和会话暴露给中间人攻击，仅建议内网/测试环境使用。
+        boolean strictHostKeyChecking = properties.isStrictHostKeyChecking();
+        if (strictHostKeyChecking) {
             String knownHosts = properties.getKnownHosts();
             if (knownHosts == null || knownHosts.isEmpty()) {
                 knownHosts = System.getProperty("user.home") + "/.ssh/known_hosts";
             }
+            Path knownHostsPath = Paths.get(knownHosts);
+            if (!Files.isRegularFile(knownHostsPath) || !Files.isReadable(knownHostsPath)) {
+                throw new IllegalStateException("无法读取 SSH known_hosts 文件: " + knownHostsPath);
+            }
             try {
-                jsch.setKnownHosts(knownHosts);
-                log.info("WebSSH: 已开启主机密钥严格校验，known_hosts={}", knownHosts);
+                jsch.setKnownHosts(knownHostsPath.toString());
+                log.info("WebSSH: 已开启主机密钥严格校验，known_hosts={}", knownHostsPath);
             } catch (Exception e) {
-                log.warn("WebSSH: 加载 known_hosts 失败: {}，主机密钥校验可能受限", knownHosts);
+                throw new IllegalStateException("加载 SSH known_hosts 失败: " + knownHostsPath, e);
             }
         } else {
-            log.warn("WebSSH: 主机密钥校验已关闭（StrictHostKeyChecking=no），存在中间人攻击风险");
+            log.warn("WebSSH: 主机密钥严格校验已关闭（webssh.strict-host-key-checking=false），连接存在中间人攻击风险，仅建议内网/测试环境使用");
         }
 
         // 创建 session
@@ -96,7 +97,7 @@ public class SshConnectionFactory {
 
         // 配置 properties
         Properties config = new Properties();
-        config.put("StrictHostKeyChecking", hostKeyVerification);
+        config.put("StrictHostKeyChecking", strictHostKeyChecking ? "yes" : "no");
         config.put("PreferredAuthentications", "publickey,keyboard-interactive,password");
         session.setConfig(config);
 

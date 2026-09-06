@@ -9,6 +9,11 @@ server:
       charset: UTF-8
       # 强制使用指定编码（覆盖客户端指定的 Content-Type 字符集）
       force: true
+    session:
+      # WebSSH 使用基于 Cookie 的会话；禁止 JavaScript 读取且禁止跨站携带。
+      cookie:
+        http-only: true
+        same-site: strict
 
 # Spring 相关配置
 spring:

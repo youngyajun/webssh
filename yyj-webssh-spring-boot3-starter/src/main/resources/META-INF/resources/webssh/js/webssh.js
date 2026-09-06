@@ -488,6 +488,12 @@ function refreshFilePanelForTab(tab) {
             '<div class="empty-state">会话凭据已失效，请重新输入凭据后连接文件管理器</div>';
         renderBreadcrumb(tab.currentPath || '/');
         updatePathInput(tab.currentPath || '/');
+    } else if (tab.fileSessionBlocked) {
+        // 终端握手被拒：文件管理器与终端保持一致，不列出文件
+        document.getElementById('fileList').innerHTML =
+            '<div class="error-message">终端连接未建立，文件管理器不可用</div>';
+        renderBreadcrumb(tab.currentPath || '/');
+        updatePathInput(tab.currentPath || '/');
     } else if (tab.fileSessionId) {
         // 已有文件会话，直接刷新文件列表和路径栏
         renderBreadcrumb(tab.currentPath || '/');
@@ -632,6 +638,24 @@ function duplicateSession(tabId) {
 // 为指定标签页连接文件会话（每个标签页独立隔离）
 async function connectFileSessionForTab(tab, username, password) {
     if (!tab || !tab.host) return;
+    // 与终端状态保持一致：先等待终端 WebSocket 握手结果。
+    // 握手被拒（未登录/会话过期、allowed-origins 未配置或不匹配、
+    // Windows 本地 PTY 模式等）时不建立文件会话、不列出文件，
+    // 避免出现"终端连不上但文件管理器仍能列出文件"的不一致表现
+    if (tab.handshakePromise) {
+        try {
+            await tab.handshakePromise;
+        } catch (e) {
+            tab.fileSessionConnected = false;
+            tab.fileSessionBlocked = true;
+            if (tab.id === activeTabId) {
+                document.getElementById('fileList').innerHTML =
+                    '<div class="error-message">终端连接未建立，文件管理器不可用</div>';
+            }
+            return;
+        }
+    }
+    tab.fileSessionBlocked = false;
     tab.fileSessionConnected = false;
     const cachedCreds = getCachedCredentials(tab.host);
     const u = username || tab.username || (cachedCreds ? cachedCreds.username : '');
@@ -675,7 +699,7 @@ async function connectFileSessionForTab(tab, username, password) {
                 fileSessionReconnecting = false;
                 if (tab.id === activeTabId) {
                     document.getElementById('fileList').innerHTML =
-                        '<div class="error-message">' + (data.msg || '建立文件会话失败') + '</div>';
+                    '<div class="error-message">' + escapeHtml(data.msg || '建立文件会话失败') + '</div>';
                 }
             }
         })
@@ -696,7 +720,7 @@ function renderTabBar() {
         const connectedClass = t.connected ? ' connected' : '';
         // 分屏中非聚焦面板的标签：给予次级高亮，提示该会话仍可见
         const inSplitClass = (splitState && containsLeaf(splitState.root, t.id) && t.id !== activeTabId) ? ' in-split' : '';
-        return `<div class="tab-item${activeClass}${connectedClass}${inSplitClass}" data-tab-id="${t.id}" title="${t.label} (${t.host})" draggable="true">
+        return `<div class="tab-item${activeClass}${connectedClass}${inSplitClass}" data-tab-id="${t.id}" title="${escapeHtml(t.label)} (${escapeHtml(t.host)})" draggable="true">
             <span class="tab-status${connectedClass}"></span>
             <span class="tab-label">${escapeHtml(t.label)}</span>
             <span class="tab-close" data-tab-close="${t.id}">&times;</span>
@@ -864,7 +888,7 @@ function updateTabOverflow() {
     overflowDropdown.innerHTML = overflowedTabs.map(t => {
         const activeClass = t.id === activeTabId ? ' active' : '';
         const connectedClass = t.connected ? ' connected' : '';
-        return `<div class="tab-overflow-item${activeClass}" data-tab-id="${t.id}" title="${t.label} (${t.host})">
+        return `<div class="tab-overflow-item${activeClass}" data-tab-id="${t.id}" title="${escapeHtml(t.label)} (${escapeHtml(t.host)})">
             <span class="tab-status${connectedClass}"></span>
             <span class="tab-label">${escapeHtml(t.label)}</span>
         </div>`;
@@ -1648,23 +1672,27 @@ function _barColor(pct) {
     if (pct >= 75) return '#d29922';
     return 'var(--accent)';
 }
+// 注意：以下辅助函数的 label/value 可能包含远端主机返回的不可信字符串
+// （如 uptime_fmt、proc、mount 等来自 SSH exec 输出），统一在拼接 HTML 前转义
 function _statCards(arr) {
     return '<div class="detail-stats">' + arr.map(function (kv) {
         const wide = kv[2] === true;
-        return '<div class="stat-card' + (wide ? ' stat-card-wide' : '') + '"><div class="stat-label">' + kv[0] + '</div><div class="stat-value">' + kv[1] + '</div></div>';
+        return '<div class="stat-card' + (wide ? ' stat-card-wide' : '') + '"><div class="stat-label">' + escapeHtml(kv[0]) + '</div><div class="stat-value">' + escapeHtml(kv[1]) + '</div></div>';
     }).join('') + '</div>';
 }
-function _sectionTitle(t) { return '<div class="detail-section-title">' + t + '</div>'; }
+function _sectionTitle(t) { return '<div class="detail-section-title">' + escapeHtml(t) + '</div>'; }
 function _progressRow(label, pct, unit, color) {
     pct = parseFloat(pct) || 0;
     const w = Math.min(100, Math.max(0, pct));
-    return '<div class="progress-row"><span class="progress-label" title="' + label + '">' + label + '</span>' +
+    // label 会拼入 title 属性，除 escapeHtml 外还需转义引号防止属性逃逸
+    const safeLabel = escapeHtml(label).replace(/"/g, '&quot;');
+    return '<div class="progress-row"><span class="progress-label" title="' + safeLabel + '">' + safeLabel + '</span>' +
         '<div class="progress-bar"><div class="progress-fill" style="width:' + w + '%;background:' + color + '"></div></div>' +
         '<span class="progress-text">' + pct.toFixed(1) + unit + '</span></div>';
 }
 function _detailList(arr) {
     return '<table class="detail-table" style="margin-top:8px"><tbody>' + arr.map(function (kv) {
-        return '<tr><td style="color:var(--text-muted)">' + kv[0] + '</td><td style="text-align:right">' + kv[1] + '</td></tr>';
+        return '<tr><td style="color:var(--text-muted)">' + escapeHtml(kv[0]) + '</td><td style="text-align:right">' + escapeHtml(kv[1]) + '</td></tr>';
     }).join('') + '</tbody></table>';
 }
 
@@ -1674,7 +1702,7 @@ function renderCpuDetail(d) {
     const coreKeys = Object.keys(d).filter(function (k) { return /^cpu\d+$/.test(k); })
         .sort(function (a, b) { return parseInt(a.slice(3)) - parseInt(b.slice(3)); });
     let html = _statCards([
-        ['型号', escapeHtml(d.model || '-'), true],
+        ['型号', d.model || '-', true],
         ['核心数', cores],
         ['频率', d.freq ? (parseFloat(d.freq)).toFixed(0) + ' MHz' : '-'],
         ['运行时间', d.uptime_fmt || '-']
@@ -1955,7 +1983,7 @@ function loadHosts() {
             selector.innerHTML = '<option value="" selected disabled>选择主机...</option>' +
                 '<option value="__new__">+ 新建会话</option>' +
                 hostsInfo.map(host =>
-                    `<option value="${host.name}" data-need-credentials="${host.needCredentials}">${host.name}</option>`
+                    `<option value="${escapeHtml(host.name)}" data-need-credentials="${host.needCredentials}">${escapeHtml(host.name)}</option>`
                 ).join('');
             // 优先尝试从本地存储恢复上次刷新前的会话标签
             if (!restoreTabs()) {
@@ -1983,9 +2011,9 @@ function saveTabsState() {
                 sshHost: t.sshHost,
                 sshPort: t.sshPort,
                 username: t.username,
-                // 仅当"记住凭据"时才持久化密码，否则刷新后需重新输入
-                password: t.rememberCredentials ? (t.password || '') : '',
-                rememberCredentials: t.rememberCredentials,
+                // 不持久化 SSH 密码；刷新页面后必须重新输入，避免泄露给同机用户或 XSS。
+                password: '',
+                rememberCredentials: false,
                 pendingCredentials: !!t.pendingCredentials
             }))
         };
@@ -2004,6 +2032,13 @@ function restoreTabs() {
     try { state = JSON.parse(raw); } catch (e) { return false; }
     if (!state || !Array.isArray(state.tabs) || state.tabs.length === 0) return false;
 
+    // 清除旧版本遗留在 localStorage 中的明文 SSH 密码，并立即回写。
+    state.tabs.forEach(saved => {
+        saved.password = '';
+        saved.rememberCredentials = false;
+    });
+    try { localStorage.setItem('webssh_tabs_state', JSON.stringify(state)); } catch (e) {}
+
     restoringTabs = true;
     let restoredActiveId = null;
     let lastTabId = null;
@@ -2014,12 +2049,9 @@ function restoreTabs() {
         if (!needCredentials) {
             // 已在配置文件配置账号密码：后端自动提供凭据，静默自动重连
             tab = createTab(saved.host, '', '', false);
-        } else if (saved.rememberCredentials && saved.password) {
-            // 手动输入且勾选"记住凭据"：使用持久化密码自动重连
-            tab = createTab(saved.host, saved.username || '', saved.password || '', true);
         } else {
-            // 手动输入但未记住凭据：创建待认证标签，稍后让用户重新输入
-            tab = createTab(saved.host, saved.username || '', '', saved.rememberCredentials, true);
+            // 手动凭证绝不跨页面持久化，创建待认证标签并要求重新输入。
+            tab = createTab(saved.host, saved.username || '', '', false, true);
         }
         // 记录刚创建的标签 id，用于恢复活跃标签
         lastTabId = tab.id;
@@ -2203,9 +2235,9 @@ function populateHostDropdown(query) {
     }
     dropdown.innerHTML = matched.map(h => {
         const meta = h.type === 'local' ? '本地PTY' : (h.needCredentials ? '需凭据' : '已配置');
-        return `<div class="host-dropdown-item" data-host="${h.name}">
+        return `<div class="host-dropdown-item" data-host="${escapeHtml(h.name)}">
             <span class="host-item-icon">&#9656;</span>
-            <span class="host-item-name">${h.name}</span>
+            <span class="host-item-name">${escapeHtml(h.name)}</span>
             <span class="host-item-meta">${meta}</span>
         </div>`;
     }).join('');
@@ -3544,6 +3576,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function connectSSHForTab(tab, username, password, isReconnect) {
     if (!tab || !tab.host) return;
+    // 终端握手结果 deferred：resolve=握手成功，reject=握手被拒（onopen 未触发即 onclose）。
+    // 必须在任何 await 之前创建并挂到 tab 上（createTab 中 connectFileSessionForTab
+    // 与本函数近乎同时调用，本函数内部还有 await，晚创建会被竞态跳过等待）。
+    // connectFileSessionForTab 据此与终端保持一致：握手被拒时不建立文件会话。
+    const prevHandshake = tab._handshakeDeferred;
+    if (prevHandshake && !prevHandshake.settled) {
+        // 本次连接请求替换了上一次未完成的握手：结算旧 deferred，避免等待方永久悬挂
+        prevHandshake.settled = true;
+        prevHandshake.resolve();
+    }
+    const handshake = { settled: false, resolve: null, reject: null };
+    handshake.promise = new Promise((resolve, reject) => {
+        handshake.resolve = resolve;
+        handshake.reject = reject;
+    });
+    tab._handshakeDeferred = handshake;
+    tab.handshakePromise = handshake.promise;
     // 清除可能挂起的重连定时器
     if (tab.reconnectTimer) {
         clearTimeout(tab.reconnectTimer);
@@ -3598,6 +3647,11 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
     // 说明握手阶段被拒绝（如 Windows + 本地 PTY 模式），不应重连避免死循环
     tab.handshakeOk = false;
     tab.socket.onopen = () => {
+        // 握手成功：通知等待终端结果的文件会话连接继续
+        if (!handshake.settled) {
+            handshake.settled = true;
+            handshake.resolve();
+        }
         tab.handshakeOk = true;
         tab.connected = true;
         tab.reconnectAttempts = 0;
@@ -3712,12 +3766,35 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
             // 终端断开时停止监控，重连成功后由文件会话重建回调恢复
             stopMonitor();
         }
-        // 握手阶段被拒绝（如 Windows + 本地 PTY 模式）：onopen 从未触发，不重连，
-        // 避免死循环；给出明确提示让用户改用 SSH 模式或更换部署平台
+        // 握手阶段被拒绝：onopen 从未触发，不重连，避免死循环。
+        // 常见原因：未登录/会话过期、allowed-origins 未配置或不匹配、
+        // Windows 上使用本地 PTY（type=local）模式等，具体以服务端日志为准
         if (!tab.handshakeOk) {
+            // 通知等待终端握手结果的文件会话连接：握手被拒，不再建立
+            if (!handshake.settled) {
+                handshake.settled = true;
+                handshake.reject(new Error('终端握手被拒绝'));
+            }
+            // 同步断开已存在的文件管理器会话（如终端重连时握手被拒），
+            // 与终端状态保持一致：终端连不上，文件管理器也不列出文件
+            if (tab.fileSessionId) {
+                const sid = tab.fileSessionId;
+                tab.fileSessionId = null;
+                tab.fileSessionConnected = false;
+                tab.fileSessionBlocked = true;
+                if (tab.id === activeTabId) {
+                    fileSessionId = null;
+                    refreshFilePanelForTab(tab);
+                }
+                fetch(contextPath + '/api/disconnect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId: sid })
+                }).catch(() => {});
+            }
             try {
-                tab.terminal.write('\r\n\x1b[31m连接被拒绝（握手失败）：服务器平台不支持该主机的连接模式。\x1b[0m\r\n');
-                tab.terminal.write('\x1b[33m本地 PTY 模式仅支持 Linux/Mac 服务器；若服务器是 Windows，请改用 SSH 模式。\x1b[0m\r\n');
+                tab.terminal.write('\r\n\x1b[31m连接握手被拒绝：请检查登录状态（重新登录）以及 webssh.allowed-origins 配置。\x1b[0m\r\n');
+                tab.terminal.write('\x1b[33m若为 Windows 本地 PTY（type=local）模式，请改用 SSH 模式；具体原因请查看服务端日志。\x1b[0m\r\n');
             } catch (e) { /* terminal 已 dispose，忽略 */ }
             tab.reconnecting = false;
             renderTabBar();
@@ -4040,7 +4117,11 @@ function loadFiles() {
     const fileList = document.getElementById('fileList');
     // 没有 fileSessionId 时不发起请求（后端已移除 HttpSession 回退）
     if (!fileSessionId) {
-        fileList.innerHTML = '<div class="empty-state">未连接</div>';
+        // 终端握手被拒导致的阻断：给出与终端一致的原因提示
+        const activeTab = getActiveTab();
+        fileList.innerHTML = (activeTab && activeTab.fileSessionBlocked)
+            ? '<div class="error-message">终端连接未建立，文件管理器不可用</div>'
+            : '<div class="empty-state">未连接</div>';
         return;
     }
     fileList.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
@@ -4080,12 +4161,12 @@ function loadFiles() {
                     return;
                 }
                 fileSessionReconnecting = false;
-                fileList.innerHTML = '<div class="error-message">' + (data.msg || '加载失败') + '</div>';
+                fileList.innerHTML = '<div class="error-message">' + escapeHtml(data.msg || '加载失败') + '</div>';
             }
         })
         .catch(err => {
             fileSessionReconnecting = false;
-            fileList.innerHTML = '<div class="error-message">加载失败: ' + err.message + '</div>';
+            fileList.innerHTML = '<div class="error-message">加载失败: ' + escapeHtml(err.message) + '</div>';
         });
 }
 
@@ -4099,7 +4180,7 @@ function renderBreadcrumb(path) {
         if (idx > 0) {
             html += `<span class="breadcrumb-separator">/</span>`;
         }
-        html += `<span class="breadcrumb-item" data-path="${current}">${part}</span>`;
+        html += `<span class="breadcrumb-item" data-path="${escapeHtml(current)}">${escapeHtml(part)}</span>`;
     });
     document.getElementById('breadcrumb').innerHTML = html;
     document.querySelectorAll('.breadcrumb-item').forEach(item => {
@@ -4127,9 +4208,9 @@ function renderFileList(files) {
         return;
     }
     html += files.map(f => `
-        <div class="file-item" data-path="${f.path}" data-type="${f.isDir ? 'dir' : 'file'}">
-            <span class="file-icon ${f.isDir ? 'dir' : getFileIconClass(f.ext)}">${getIcon(f)}</span>
-            <span class="file-name">${f.name}</span>
+        <div class="file-item" data-path="${escapeHtml(f.path)}" data-type="${f.isDir ? 'dir' : 'file'}">
+            <span class="file-icon ${escapeHtml(f.isDir ? 'dir' : getFileIconClass(f.ext))}">${getIcon(f)}</span>
+            <span class="file-name">${escapeHtml(f.name)}</span>
             <span class="file-info">${f.isDir ? 'DIR' : formatSize(f.size)}</span>
         </div>
     `).join('');
@@ -4357,9 +4438,9 @@ function showSuggestions(suggestions) {
         return;
     }
     container.innerHTML = suggestions.map(s =>
-        `<div class="path-suggestion-item" data-path="${s.path}">
+        `<div class="path-suggestion-item" data-path="${escapeHtml(s.path)}">
             <span class="path-suggestion-icon">\uD83D\uDCC1</span>
-            <span>${s.name}</span>
+            <span>${escapeHtml(s.name)}</span>
         </div>`
     ).join('');
     container.classList.add('show');
@@ -4427,11 +4508,11 @@ function previewFile(path) {
             if (data.code === 200) {
                 content.textContent = data.content;
             } else {
-                content.innerHTML = '<div class="error-message">' + (data.msg || '加载失败') + '</div>';
+                content.innerHTML = '<div class="error-message">' + escapeHtml(data.msg || '加载失败') + '</div>';
             }
         })
         .catch(err => {
-            content.innerHTML = '<div class="error-message">加载失败: ' + err.message + '</div>';
+            content.innerHTML = '<div class="error-message">加载失败: ' + escapeHtml(err.message) + '</div>';
         });
 }
 
@@ -4754,8 +4835,8 @@ function checkDirSizeBeforeDownload(path) {
                     // 超过 1G，弹出确认框
                     largeDirPending.path = path;
                     document.getElementById('largeDirMsg').innerHTML =
-                        '文件夹 <b>' + path.split('/').pop() + '</b> 大小约为 <b style="color:#f0883e;">' +
-                        data.sizeFormatted + '</b>，超过 1 GB，下载可能耗时较长。<br>确定要继续下载吗？';
+                        '文件夹 <b>' + escapeHtml(path.split('/').pop()) + '</b> 大小约为 <b style="color:#f0883e;">' +
+                        escapeHtml(data.sizeFormatted) + '</b>，超过 1 GB，下载可能耗时较长。<br>确定要继续下载吗？';
                     document.getElementById('largeDirModal').classList.add('show');
                 } else {
                     // 未超 1G 或无法获取大小，直接下载

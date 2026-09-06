@@ -331,8 +331,8 @@ public class SshService {
         // 用 ConcurrentWebSocketSessionDecorator 包装：
         // - sendMessage 异步排队执行，不阻塞读 SSH 线程
         // - ZMODEM 大文件传输时，rz/sz 的 ZACK 等协议帧能及时回传到前端，避免 zmodem.js 卡死等 ZACK
-        // - bufferSizeLimit=10MB 与 WebSocket 容器缓冲区一致；sendTimeLimit=0 表示不超时（大文件传输耗时长）
-        WebSocketSession asyncSession = new ConcurrentWebSocketSessionDecorator(webSocketSession, 0, 10 * 1024 * 1024);
+        // - 限制单会话待发送缓冲区为 1MB，避免慢客户端无限积压终端输出。
+        WebSocketSession asyncSession = new ConcurrentWebSocketSessionDecorator(webSocketSession, 0, 1024 * 1024);
         InputStream inputStream = channel.getInputStream();
         // 缓冲区加大以提升 ZMODEM 文件传输吞吐
         byte[] buffer = new byte[8192];

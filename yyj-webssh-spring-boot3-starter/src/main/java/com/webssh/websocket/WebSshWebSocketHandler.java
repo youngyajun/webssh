@@ -10,9 +10,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.Set;
 
 /**
  * WebSSH WebSocket 处理器
@@ -40,11 +44,25 @@ public class WebSshWebSocketHandler extends AbstractWebSocketHandler {
     /** WebSocket 握手属性 key：标记本会话是否为本地 PTY 模式 */
     private static final String ATTR_LOCAL_PTY = "isLocalPty";
 
-    private final ExecutorService executorService = Executors.newCachedThreadPool();
+    /**
+     * 终端输出读取线程池。每个连接的 sendHandle 是长期阻塞任务（循环读取 SSH/PTY 输出直到通道 EOF），
+     * 此类任务必须立即分配线程执行、绝不能排队：排队会导致后续连接永远收不到终端输出，
+     * 表现为终端只有光标闪烁、输入无回显（曾是 corePoolSize=2 + 有界队列导致的缺陷：
+     * 第 3 个及以后的终端连接全部"假死"）。
+     * 因此使用 corePoolSize=0 + SynchronousQueue：每提交一个任务立即创建或复用线程，
+     * 空闲线程 60 秒后回收；上限 32 个并发终端连接，超限直接拒绝并向客户端返回明确错误。
+     */
+    private final ExecutorService executorService = new ThreadPoolExecutor(
+            0, 32, 60L, TimeUnit.SECONDS, new SynchronousQueue<>(),
+            new ThreadPoolExecutor.AbortPolicy());
+
+    /** HTTP 会话到终端连接的反向索引，用于登出或会话失效时强制关闭终端。 */
+    private final ConcurrentHashMap<String, Set<WebSocketSession>> sessionsByHttpSession = new ConcurrentHashMap<>();
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         log.info("WebSSH: WebSocket连接建立 {}", session.getId());
+        trackSession(session);
 
         String hostName = (String) session.getAttributes().get("host");
         if (hostName == null || hostName.isEmpty()) {
@@ -80,6 +98,11 @@ public class WebSshWebSocketHandler extends AbstractWebSocketHandler {
                     log.error("WebSSH: 读取输出异常", e);
                 }
             });
+        } catch (RejectedExecutionException e) {
+            // 并发终端连接已达线程池上限：明确告知客户端并关闭，避免留下"看似已连接实则无输出"的假连接
+            log.warn("WebSSH: 终端连接数已达上限，拒绝建立输出读取任务 sessionId={}", session.getId());
+            session.sendMessage(new TextMessage("\r\n连接失败: 当前终端连接数已达服务器上限，请关闭部分会话后重试\r\n"));
+            session.close();
         } catch (Exception e) {
             log.error("WebSSH: 建立连接失败 (isLocal={})", isLocal, e);
             session.sendMessage(new TextMessage("\r\n连接失败: " + e.getMessage() + "\r\n"));
@@ -119,6 +142,7 @@ public class WebSshWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         log.info("WebSSH: WebSocket连接关闭 {} status={}", session.getId(), status);
+        untrackSession(session);
         if (isLocalPty(session)) {
             localPtyService.closeConnection(session);
         } else {
@@ -129,6 +153,7 @@ public class WebSshWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
         log.error("WebSSH: WebSocket传输异常", exception);
+        untrackSession(session);
         if (session.isOpen()) {
             session.close();
         }
@@ -148,9 +173,49 @@ public class WebSshWebSocketHandler extends AbstractWebSocketHandler {
         return Boolean.TRUE.equals(attr);
     }
 
+    /** 关闭属于指定 HTTP 会话的全部终端连接。 */
+    public void closeSessionsForHttpSession(String httpSessionId) {
+        if (httpSessionId == null) {
+            return;
+        }
+        Set<WebSocketSession> sessions = sessionsByHttpSession.remove(httpSessionId);
+        if (sessions == null) {
+            return;
+        }
+        for (WebSocketSession session : sessions) {
+            try {
+                if (session.isOpen()) {
+                    session.close(CloseStatus.POLICY_VIOLATION);
+                }
+            } catch (Exception e) {
+                log.warn("WebSSH: 关闭已失效会话的终端连接失败: {}", session.getId(), e);
+            }
+        }
+    }
+
+    private void trackSession(WebSocketSession session) {
+        Object httpSessionId = session.getAttributes().get("websshHttpSessionId");
+        if (httpSessionId instanceof String) {
+            sessionsByHttpSession.computeIfAbsent((String) httpSessionId,
+                    ignored -> ConcurrentHashMap.newKeySet()).add(session);
+        }
+    }
+
+    private void untrackSession(WebSocketSession session) {
+        Object httpSessionId = session.getAttributes().get("websshHttpSessionId");
+        if (!(httpSessionId instanceof String)) {
+            return;
+        }
+        String key = (String) httpSessionId;
+        sessionsByHttpSession.computeIfPresent(key, (ignored, sessions) -> {
+            sessions.remove(session);
+            return sessions.isEmpty() ? null : sessions;
+        });
+    }
+
     /**
      * 应用关闭时关闭线程池，避免线程泄漏
-     * newCachedThreadPool 无上限，未关闭会导致应用关停时线程残留
+     * 有界线程池在应用关闭时应显式停止，避免线程残留
      */
     @PreDestroy
     public void destroy() {
