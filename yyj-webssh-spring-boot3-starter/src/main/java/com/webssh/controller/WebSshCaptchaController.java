@@ -4,6 +4,7 @@ import cloud.tianai.captcha.application.ImageCaptchaApplication;
 import cloud.tianai.captcha.application.vo.ImageCaptchaVO;
 import cloud.tianai.captcha.common.constant.CaptchaTypeConstant;
 import cloud.tianai.captcha.common.response.ApiResponse;
+import cloud.tianai.captcha.generator.common.model.dto.GenerateParam;
 import cloud.tianai.captcha.validator.common.model.dto.ImageCaptchaTrack;
 import com.webssh.config.WebSshProperties;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,7 +18,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * WebSSH 滑块验证码控制器（tianai-captcha）
+ * WebSSH 旋转验证码控制器（tianai-captcha）
  *
  * <p>提供验证码生成与校验接口，符合 tianai-captcha 默认接口规范：
  * <ul>
@@ -40,7 +41,7 @@ public class WebSshCaptchaController {
     private WebSshProperties properties;
 
     /**
-     * 生成滑块验证码
+     * 生成旋转验证码
      */
     @PostMapping("/get")
     public Map<String, Object> getCaptcha() {
@@ -51,7 +52,13 @@ public class WebSshCaptchaController {
             result.put("captchaEnabled", false);
             return result;
         }
-        ApiResponse<ImageCaptchaVO> response = imageCaptchaApplication.generateCaptcha(CaptchaTypeConstant.SLIDER);
+        // 开启混淆：旋转验证码下 obfuscate 会将模板随机旋转一个角度，增加机器识别难度
+        // 校验仍只认真实旋转角度，前端 tac 组件根据返回的 type 自动渲染旋转样式
+        GenerateParam captchaParam = GenerateParam.builder()
+                .type(CaptchaTypeConstant.ROTATE)
+                .obfuscate(true)
+                .build();
+        ApiResponse<ImageCaptchaVO> response = imageCaptchaApplication.generateCaptcha(captchaParam);
         if (response.isSuccess()) {
             result.put("code", 200);
             result.put("data", response.getData());
@@ -63,7 +70,7 @@ public class WebSshCaptchaController {
     }
 
     /**
-     * 校验滑块验证码
+     * 校验旋转验证码
      * 校验成功返回 token（即验证码 ID），供前端登录时二次校验使用
      */
     @PostMapping("/check")

@@ -97,7 +97,7 @@ public class WebSshProperties {
     private LoginSecurity loginSecurity = new LoginSecurity();
 
     /**
-     * 滑块验证码配置（tianai-captcha）
+     * 旋转验证码配置（tianai-captcha）
      */
     private Captcha captcha = new Captcha();
 
@@ -565,13 +565,13 @@ public class WebSshProperties {
     }
 
     /**
-     * 滑块验证码配置（tianai-captcha）
+     * 旋转验证码配置（tianai-captcha）
      * 不依赖 redis，验证码数据使用本地内存缓存；二次验证开启后，登录时需携带验证成功返回的 token
      */
     public static class Captcha {
         /**
-         * 是否启用滑块验证码，默认 true
-         * 设为 false 则登录时不校验验证码，前端也不弹出滑块
+         * 是否启用旋转验证码，默认 true
+         * 设为 false 则登录时不校验验证码，前端也不弹出验证码
          */
         private boolean enabled = true;
 

@@ -332,7 +332,7 @@ body {
     }
 }
 
-/* ---------- 滑块验证码浮层遮罩 ---------- */
+/* ---------- 旋转验证码浮层遮罩 ---------- */
 #captcha-overlay {
     display: none;
     position: fixed;

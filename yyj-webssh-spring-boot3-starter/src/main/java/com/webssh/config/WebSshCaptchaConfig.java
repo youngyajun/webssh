@@ -24,10 +24,10 @@ import java.util.List;
  *
  * <p>本 Starter 不依赖 redis，tianai-captcha-springboot-starter 在未引入 StringRedisTemplate 时
  * 会自动注册 LocalMemoryResourceStore（见 CacheStoreAutoConfiguration.LocalCacheStoreConfiguration），
- * 并在 ImageCaptchaAutoConfiguration 中根据 init-default-resource=true 加载系统默认滑块模板与字体。
+ * 并在 ImageCaptchaAutoConfiguration 中根据 init-default-resource=true 加载系统默认旋转模板与字体。
  *
  * <p>此处不覆盖 resourceStore Bean（避免与 tianai 自动配置的 @ConditionalOnMissingBean 冲突），
- * 而是注入已注册的 ResourceStore，在 ImageCaptchaApplication 创建前向其追加自定义滑块背景图。
+ * 而是注入已注册的 ResourceStore，在 ImageCaptchaApplication 创建前向其追加自定义旋转验证码背景图。
  *
  * <p>通过 @AutoConfigureAfter 确保在 CacheStoreAutoConfiguration 之后（ResourceStore 已存在），
  * 通过 @AutoConfigureBefore 确保在 ImageCaptchaAutoConfiguration 之前（背景图先于验证码应用就绪）。
@@ -56,9 +56,9 @@ public class WebSshCaptchaConfig {
         CrudResourceStore crud = (CrudResourceStore) resourceStore;
         List<Resource> images = getSliderBackgroundImages();
         for (Resource bg : images) {
-            crud.addResource(CaptchaTypeConstant.SLIDER, bg);
+            crud.addResource(CaptchaTypeConstant.ROTATE, bg);
         }
-        log.info("WebSSH: 已加载 {} 张滑块验证码背景图", images.size());
+        log.info("WebSSH: 已加载 {} 张旋转验证码背景图", images.size());
     }
 
     /**
@@ -81,7 +81,7 @@ public class WebSshCaptchaConfig {
                 list.add(new Resource("classpath", BG_DIR + filename));
             }
         } catch (Exception e) {
-            log.warn("WebSSH: 加载滑块验证码背景图失败: {}", e.getMessage());
+            log.warn("WebSSH: 加载旋转验证码背景图失败: {}", e.getMessage());
         }
         return list;
     }

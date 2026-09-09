@@ -7,9 +7,9 @@ let rsaPublicKey = null;
 let rsaKeyId = null;
 // 登录锁定倒计时计时器
 let lockCountdownTimer = null;
-// 是否启用滑块验证码（从后端获取）
+// 是否启用旋转验证码（从后端获取）
 let captchaEnabled = true;
-// 滑块验证成功后的二次验证 token，登录时回传后端
+// 旋转验证成功后的二次验证 token，登录时回传后端
 let captchaValidation = null;
 // tianai-captcha 实例
 let tacInstance = null;
@@ -142,7 +142,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         }
     }
 
-    // 启用滑块验证码且尚未验证时，弹出验证码；验证成功后回调 doLogin
+    // 启用旋转验证码且尚未验证时，弹出验证码；验证成功后回调 doLogin
     if (captchaEnabled && !captchaValidation) {
         initCaptcha();
         return;
@@ -178,7 +178,7 @@ function isPublicKeyLoaded(encrypt, expectedKey) {
 }
 
 /**
- * 执行登录（携带滑块验证码二次验证 token）
+ * 执行登录（携带旋转验证码二次验证 token）
  */
 async function doLogin() {
     const username = document.getElementById('username').value;
@@ -268,7 +268,7 @@ async function doLogin() {
 }
 
 /**
- * 初始化 tianai-captcha 滑块验证码
+ * 初始化 tianai-captcha 旋转验证码
  * 弹出居中浮层，验证成功后设置 captchaValidation 并执行登录
  */
 function initCaptcha() {
@@ -283,9 +283,9 @@ function initCaptcha() {
         overlay.classList.add('show');
     }
     const captchaConfig = {
-        // 生成滑块验证码接口
+        // 生成旋转验证码接口
         requestCaptchaDataUrl: contextPath + '/captcha/get',
-        // 校验滑块验证码接口
+        // 校验旋转验证码接口
         validCaptchaUrl: contextPath + '/captcha/check',
         // 验证码绑定的容器
         bindEl: '#captcha-box',
