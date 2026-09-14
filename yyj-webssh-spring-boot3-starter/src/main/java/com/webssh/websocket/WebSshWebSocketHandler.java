@@ -102,11 +102,14 @@ public class WebSshWebSocketHandler extends AbstractWebSocketHandler {
             // 并发终端连接已达线程池上限：明确告知客户端并关闭，避免留下"看似已连接实则无输出"的假连接
             log.warn("WebSSH: 终端连接数已达上限，拒绝建立输出读取任务 sessionId={}", session.getId());
             session.sendMessage(new TextMessage("\r\n连接失败: 当前终端连接数已达服务器上限，请关闭部分会话后重试\r\n"));
-            session.close();
+            // 使用自定义关闭码 4001 标识"连接建立失败"，前端 onclose 据此跳过自动重连（重试无意义）
+            session.close(new CloseStatus(4001, "connect-failed"));
         } catch (Exception e) {
             log.error("WebSSH: 建立连接失败 (isLocal={})", isLocal, e);
             session.sendMessage(new TextMessage("\r\n连接失败: " + e.getMessage() + "\r\n"));
-            session.close();
+            // 使用自定义关闭码 4001 标识"连接建立失败"（如 SSH 认证失败），前端 onclose 据此跳过自动重连，
+            // 避免凭据错误时握手成功但 SSH 认证失败导致的无限重连循环
+            session.close(new CloseStatus(4001, "connect-failed"));
         }
     }
 

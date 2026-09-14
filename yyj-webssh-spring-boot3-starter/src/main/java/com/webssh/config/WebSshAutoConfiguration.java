@@ -7,16 +7,20 @@ import com.webssh.controller.WebSshPageController;
 import com.webssh.security.ClientIpExtractor;
 import com.webssh.security.LoginAttemptService;
 import com.webssh.security.WebSshAuthInterceptor;
+import com.webssh.security.WebSshSecurityHeadersFilter;
 import com.webssh.ssh.LocalPtyService;
 import com.webssh.ssh.SshConnectionFactory;
 import com.webssh.ssh.SshService;
 import com.webssh.ssh.SshSessionHolder;
 import com.webssh.websocket.WebSshWebSocketConfig;
 import com.webssh.websocket.WebSshWebSocketHandler;
+import com.webssh.websocket.WsTicketStore;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpSessionEvent;
 import jakarta.servlet.http.HttpSessionListener;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.boot.web.servlet.ServletListenerRegistrationBean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +77,34 @@ public class WebSshAutoConfiguration {
     }
 
     /**
+     * 安全响应头过滤器（CSP / 点击劫持 / MIME 嗅探 / Referrer 等防护）
+     * 仅作用于 contextPath 下的请求，避免影响宿主应用的其他路径。
+     * 通过 webssh.security.headers-enabled=false 可整体关闭。
+     */
+    @Bean
+    public FilterRegistrationBean<WebSshSecurityHeadersFilter> webSshSecurityHeadersFilter(
+            WebSshProperties properties) {
+        FilterRegistrationBean<WebSshSecurityHeadersFilter> registration = new FilterRegistrationBean<>();
+        registration.setFilter(new WebSshSecurityHeadersFilter(properties));
+        String contextPath = properties.getContextPath();
+        if (contextPath == null || contextPath.isEmpty()) {
+            contextPath = "/webssh";
+        }
+        if (!contextPath.startsWith("/")) {
+            contextPath = "/" + contextPath;
+        }
+        if (contextPath.endsWith("/")) {
+            contextPath = contextPath.substring(0, contextPath.length() - 1);
+        }
+        registration.addUrlPatterns(contextPath + "/*");
+        registration.setDispatcherTypes(DispatcherType.REQUEST);
+        registration.setName("webSshSecurityHeadersFilter");
+        // 较高优先级，确保安全头在业务处理前就已设置
+        registration.setOrder(0);
+        return registration;
+    }
+
+    /**
      * SSH 连接工厂
      */
     @Bean
@@ -116,6 +148,15 @@ public class WebSshAutoConfiguration {
     @Bean
     public WebSshWebSocketHandler webSshWebSocketHandler() {
         return new WebSshWebSocketHandler();
+    }
+
+    /**
+     * WebSocket 一次性连接票据存储
+     * 用于代替“密码密文直接放在 WS URL 查询串”，避免凭据经日志/代理/Referer 泄露
+     */
+    @Bean
+    public WsTicketStore wsTicketStore() {
+        return new WsTicketStore();
     }
 
     /**

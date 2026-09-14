@@ -14,6 +14,9 @@ server:
       cookie:
         http-only: true
         same-site: strict
+        # secure=true 时 Cookie 仅通过 HTTPS 传输。默认 false 以兼容必须走 HTTP 的站点；
+        # 若部署在 HTTPS 下，建议设置环境变量 WEBSSH_COOKIE_SECURE=true 开启，防止会话 Cookie 经明文链路泄露。
+        secure: ${WEBSSH_COOKIE_SECURE:false}
 
 # Spring 相关配置
 spring:

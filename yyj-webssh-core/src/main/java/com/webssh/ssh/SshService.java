@@ -16,6 +16,7 @@ import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorato
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -607,6 +608,12 @@ public class SshService {
         }
         // 未在配置中找到，作为自定义主机处理（支持 host:port 格式）
         if (hostName != null && !hostName.isEmpty()) {
+            WebSshProperties.Security security = properties.getSecurity();
+            // 安全开关：禁用自定义主机时，仅允许连接 hosts 列表中已配置的主机，防止把服务器当跳板（SSRF）
+            if (security != null && !security.isAllowCustomHost()) {
+                log.warn("WebSSH: 已禁用自定义主机连接（webssh.security.allow-custom-host=false），拒绝 host={}", hostName);
+                return null;
+            }
             WebSshProperties.Host custom = new WebSshProperties.Host();
             String host = hostName;
             int port = 22;
@@ -627,6 +634,11 @@ public class SshService {
                     }
                 }
             }
+            // 白名单校验：allowed-custom-hosts 非空时，自定义主机必须命中才允许连接
+            if (!isCustomHostInWhitelist(host)) {
+                log.warn("WebSSH: 自定义主机 {} 未命中白名单 webssh.security.allowed-custom-hosts，拒绝连接", host);
+                return null;
+            }
             custom.setName(hostName);
             custom.setHost(host);
             custom.setPort(port);
@@ -634,5 +646,75 @@ public class SshService {
             return custom;
         }
         return null;
+    }
+
+    /**
+     * 自定义主机白名单校验。
+     * webssh.security.allowed-custom-hosts 为空时不限制（返回 true）；
+     * 非空时，host 必须精确匹配某条目（忽略大小写）或落在某 CIDR 网段内才允许。
+     */
+    private boolean isCustomHostInWhitelist(String host) {
+        WebSshProperties.Security security = properties.getSecurity();
+        if (security == null || host == null) {
+            return true;
+        }
+        List<String> whitelist = security.getAllowedCustomHosts();
+        if (whitelist == null || whitelist.isEmpty()) {
+            return true;
+        }
+        for (String raw : whitelist) {
+            if (raw == null) {
+                continue;
+            }
+            String entry = raw.trim();
+            if (entry.isEmpty()) {
+                continue;
+            }
+            if (entry.indexOf('/') >= 0) {
+                if (inCidr(host, entry)) {
+                    return true;
+                }
+            } else if (entry.equalsIgnoreCase(host)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 判断 host 是否落在 CIDR 网段内（如 192.168.1.0/24）。
+     * host 与网段基址均通过 DNS 解析为 IP 后按前缀位比较；解析失败或格式非法时返回 false（fail-closed）。
+     */
+    private boolean inCidr(String host, String cidr) {
+        try {
+            int slash = cidr.indexOf('/');
+            String base = cidr.substring(0, slash).trim();
+            int prefix = Integer.parseInt(cidr.substring(slash + 1).trim());
+            byte[] baseBytes = InetAddress.getByName(base).getAddress();
+            byte[] hostBytes = InetAddress.getByName(host).getAddress();
+            if (baseBytes.length != hostBytes.length) {
+                return false;
+            }
+            int maxPrefix = baseBytes.length * 8;
+            if (prefix < 0 || prefix > maxPrefix) {
+                return false;
+            }
+            int fullBytes = prefix / 8;
+            int remBits = prefix % 8;
+            for (int i = 0; i < fullBytes; i++) {
+                if (baseBytes[i] != hostBytes[i]) {
+                    return false;
+                }
+            }
+            if (remBits > 0) {
+                int mask = (0xFF << (8 - remBits)) & 0xFF;
+                if ((baseBytes[fullBytes] & mask) != (hostBytes[fullBytes] & mask)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

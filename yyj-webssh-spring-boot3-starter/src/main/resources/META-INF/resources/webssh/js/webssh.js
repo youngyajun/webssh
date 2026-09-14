@@ -58,6 +58,31 @@ async function encryptPassword(password) {
         return null;
     }
 }
+
+/**
+ * 用 RSA 密文换取一次性 WebSocket 连接票据
+ * 密文通过请求体（POST）传递而非 URL，握手时 URL 只携带返回的短期一次性票据，
+ * 避免密码密文出现在 URL（被日志/反向代理/Referer 记录）。
+ * @param encrypted RSA 加密后的 Base64 密文
+ * @param keyId 公钥对应的 keyId
+ * @returns {Promise<string|null>} 票据字符串，失败返回 null
+ */
+async function requestWsTicket(encrypted, keyId) {
+    if (!encrypted) return null;
+    try {
+        const resp = await fetch(contextPath + '/auth/ws-ticket', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: encrypted, keyId: keyId })
+        });
+        const data = await resp.json();
+        if (data.code === 200 && data.ticket) return data.ticket;
+        return null;
+    } catch (e) {
+        console.error('获取 WebSocket 票据失败', e);
+        return null;
+    }
+}
 // 多标签管理
 let tabs = [];                   // 标签页数组 {id, label, host, username, password, terminal, fitAddon, socket, connected, element}
 let activeTabId = null;
@@ -2421,6 +2446,9 @@ async function refreshTab(tab) {
         );
         if (!ok) return;
     }
+    // 手动刷新 = 一次全新的用户发起连接：重置自动重连计数，
+    // 避免上一次自动重连已耗尽（达到最大次数）导致本次刷新后遇到瞬时断连时立即放弃。
+    tab.reconnectAttempts = 0;
     const hostInfo = hostsInfo.find(h => h.name === tab.host);
     // 自定义主机（不在配置中）始终需要凭据
     const needCredentials = hostInfo ? hostInfo.needCredentials : true;
@@ -3628,13 +3656,30 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
     if (username) {
         wsUrl += `&username=${encodeURIComponent(username)}`;
     }
-    // 密码使用 RSA 加密后传输，与登录页流程一致
+    // 密码使用 RSA 加密后换取一次性票据传输，与登录页流程一致，且避免密文出现在 WS URL
     if (password) {
         const enc = await encryptPassword(password);
-        if (enc) {
-            wsUrl += `&password=${encodeURIComponent(enc.encrypted)}`;
-            wsUrl += `&keyId=${encodeURIComponent(enc.keyId)}`;
+        const ticket = enc ? await requestWsTicket(enc.encrypted, enc.keyId) : null;
+        if (!ticket) {
+            // 需要密码却拿不到票据（公钥接口限流/网络异常/登录过期等）：
+            // 绝不能以“无密码”方式继续连接，否则后端 SSH 必然认证失败并触发无意义的重连循环。
+            // 结算握手 deferred（避免文件会话等待悬挂），明确提示并中止本次连接。
+            if (!handshake.settled) {
+                handshake.settled = true;
+                handshake.reject(new Error('无法获取连接凭据'));
+            }
+            tab.reconnecting = false;
+            tab.connected = false;
+            try {
+                tab.terminal.write('\r\n\x1b[31m连接失败：无法获取加密凭据（可能请求过于频繁被限流或登录已过期），请稍后重试或重新登录。\x1b[0m\r\n');
+            } catch (e) { /* terminal 已 dispose，忽略 */ }
+            if (tab.id === activeTabId) {
+                document.getElementById('connectionStatus').innerHTML = '连接失败';
+            }
+            renderTabBar();
+            return;
         }
+        wsUrl += `&ticket=${encodeURIComponent(ticket)}`;
     }
 
     tab.socket = new WebSocket(wsUrl);
@@ -3646,6 +3691,9 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
     // 标记握手是否成功：onopen 触发表示握手已通过；若未触发就直接 onclose，
     // 说明握手阶段被拒绝（如 Windows + 本地 PTY 模式），不应重连避免死循环
     tab.handshakeOk = false;
+    // SSH 是否已确认健康（收到首个二进制终端数据）：用于把“重连成功”提示与
+    // 重连计数重置延迟到认证真正通过后，避免握手成功但认证失败时的误报与死循环
+    tab.sshReady = false;
     tab.socket.onopen = () => {
         // 握手成功：通知等待终端结果的文件会话连接继续
         if (!handshake.settled) {
@@ -3654,12 +3702,15 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
         }
         tab.handshakeOk = true;
         tab.connected = true;
-        tab.reconnectAttempts = 0;
+        // 注意：不在此处重置 reconnectAttempts。onopen 仅代表 WebSocket 握手成功，
+        // 后端 SSH 连接/认证可能随即失败；若在此重置，认证失败会让重试计数永远归零，
+        // 导致无限重连循环。改为在收到首个服务端终端数据（连接确实健康）时重置。
         tab.reconnecting = false;
         if (!isReconnect) {
             tab.terminal.clear();
         } else {
-            tab.terminal.write('\r\n\x1b[32m重连成功\x1b[0m\r\n');
+            // “重连成功”提示延迟到收到首个 SSH 二进制数据（确认认证成功）时再显示，
+            // 避免 SSH 认证失败时先提示“重连成功”又立刻“连接失败”自相矛盾。
             // 终端重连成功后，文件会话可能已失效（服务端重启），主动重建
             if (tab.fileSessionId) {
                 const oldSessionId = tab.fileSessionId;
@@ -3711,6 +3762,19 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
         // sentry 会自动识别 ZMODEM 协议帧，普通字节通过 to_terminal 回调写入 xterm，
         // ZMODEM 协议帧通过 on_detect 触发文件传输流程
         if (event.data instanceof ArrayBuffer) {
+            // 首次收到二进制终端数据 => SSH 已通过认证并建立 shell，连接确实健康。
+            // onopen 仅代表 WebSocket 握手成功；后端 SSH 认证失败时会先发 TextMessage 错误
+            // 再以关闭码 4001 断开，永远不会进入本分支，故这里才是“连接就绪”的可靠信号。
+            if (!tab.sshReady) {
+                tab.sshReady = true;
+                // 重连计数在此重置（而非 onopen）：认证失败不会走到这里，不会把失败连接的
+                // 计数错误清零而导致无限重连；健康连接重置后，下次网络抖动仍有完整重试次数。
+                tab.reconnectAttempts = 0;
+                // 延迟到确认 SSH 健康后再提示“重连成功”，与 onopen 的语义保持一致
+                if (isReconnect) {
+                    try { tab.terminal.write('\r\n\x1b[32m重连成功\x1b[0m\r\n'); } catch (e) { /* terminal 已 dispose，忽略 */ }
+                }
+            }
             tab.zmodemSentry.consume(new Uint8Array(event.data));
         } else {
             // 兼容性兜底：若收到 TextMessage（如错误提示），直接写入终端
@@ -3724,6 +3788,9 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
         // 服务器关闭码 4000：shell 正常退出（用户输入 exit/logout），
         // 不自动重连（与 xshell 行为一致），用户可手动刷新重新连接
         const shellExited = event.code === 4000;
+        // 服务器关闭码 4001：连接建立失败（SSH 认证失败、连接数达上限等）。
+        // 用同样的凭据重试没有意义，且会造成“重连成功→连接失败”的刷屏死循环，必须停止自动重连。
+        const connectFailed = event.code === 4001;
         // 清理该标签页的 ZMODEM 状态：连接断开时对端 rz/sz 进程已退出，
         // 残留的 activeZmodemSession 会阻止后续传输，必须显式清理
         if (tab.zmodemSession) {
@@ -3762,7 +3829,8 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
             }).catch(() => {});
         }
         if (tab.id === activeTabId) {
-            document.getElementById('connectionStatus').innerHTML = shellExited ? '已关闭' : '未连接';
+            document.getElementById('connectionStatus').innerHTML =
+                shellExited ? '已关闭' : (connectFailed ? '连接失败' : '未连接');
             // 终端断开时停止监控，重连成功后由文件会话重建回调恢复
             stopMonitor();
         }
@@ -3808,13 +3876,20 @@ async function connectSSHForTab(tab, username, password, isReconnect) {
                 // 移除终端焦点，停止光标闪烁，明确提示会话已结束（与 xshell 行为一致）
                 // 避免 terminal 看似活跃但键盘输入被静默丢弃，给用户"卡住"的错觉
                 tab.terminal.blur();
+            } else if (connectFailed) {
+                // 连接建立失败（认证失败等）：后端已在关闭前发送具体原因（如 Auth fail），
+                // 此处补充操作指引并停止自动重连——重试相同凭据只会刷屏，无实际意义。
+                tab.terminal.write('\r\n\x1b[31m连接已断开\x1b[0m\r\n');
+                tab.terminal.write('\x1b[33m认证或连接失败，已停止自动重连。请检查凭据后点击工具栏“刷新”按钮重试。\x1b[0m\r\n');
+                tab.terminal.blur();
             } else {
                 tab.terminal.write('\r\n\x1b[31m连接已断开\x1b[0m\r\n');
             }
         } catch (e) { /* terminal 已 dispose，忽略 */ }
         renderTabBar();
-        // 非用户主动关闭 且 非 shell 正常退出时触发自动重连
-        if (!tab.manualClose && !shellExited) {
+        // 非用户主动关闭 且 非 shell 正常退出 且 非连接建立失败时触发自动重连。
+        // connectFailed（关闭码 4001）代表 SSH 认证/建连失败，重试相同凭据只会刷屏，必须跳过。
+        if (!tab.manualClose && !shellExited && !connectFailed) {
             attemptReconnect(tab);
         }
     };
@@ -4195,7 +4270,7 @@ function renderFileList(files) {
     // 非根目录时，在列表顶部添加 ".." 返回上级目录
     if (currentPath && currentPath !== '/') {
         const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/')) || '/';
-        html += `<div class="file-item parent-dir" data-path="${parentPath}" data-type="dir">
+        html += `<div class="file-item parent-dir" data-path="${escapeHtml(parentPath)}" data-type="dir">
             <span class="file-icon dir">\uD83D\uDCC1</span>
             <span class="file-name">..</span>
             <span class="file-info">上级目录</span>
@@ -4996,9 +5071,17 @@ function hideTerminalContextMenu() {
 }
 
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    return String(text).replace(/[&<>"']/g, function (c) {
+        switch (c) {
+            case '&': return '&amp;';
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '"': return '&quot;';
+            case "'": return '&#39;';
+            default: return c;
+        }
+    });
 }
 
 // ===== 文件面板拖拽调整宽度 =====

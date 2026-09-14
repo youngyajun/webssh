@@ -7,6 +7,7 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.spec.RSAKeyGenParameterSpec;
 import java.util.Base64;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -103,6 +104,32 @@ public class RsaUtil {
         String keyId = UUID.randomUUID().toString();
         keyMap.put(keyId, privateKey);
         return keyId;
+    }
+
+    /**
+     * 将私钥存入映射表并限制表大小，返回唯一的 keyId。
+     * <p>未认证用户可反复请求公钥接口，每次都会向 Session 映射表写入一把私钥；
+     * 若不限制，攻击者可在单个会话内堆积大量 2048 位私钥导致内存耗尽。
+     * 当条目数达到 {@code maxSize} 时，按迭代顺序移除最早的条目以满足内存上界
+     * （keyId 为一次性使用，正常用户同时挂起的密钥极少，不会误伤）。</p>
+     *
+     * @param keyMap     私钥映射表
+     * @param privateKey 要存储的私钥
+     * @param maxSize    映射表最大条目数，&lt;=0 表示不限制
+     * @return keyId
+     */
+    public static String storePrivateKey(Map<String, PrivateKey> keyMap, PrivateKey privateKey, int maxSize) {
+        if (maxSize > 0) {
+            while (keyMap.size() >= maxSize) {
+                Iterator<String> it = keyMap.keySet().iterator();
+                if (!it.hasNext()) {
+                    break;
+                }
+                it.next();
+                it.remove();
+            }
+        }
+        return storePrivateKey(keyMap, privateKey);
     }
 
     /**

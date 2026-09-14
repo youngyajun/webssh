@@ -101,6 +101,11 @@ public class WebSshProperties {
      */
     private Captcha captcha = new Captcha();
 
+    /**
+     * 安全加固配置（安全响应头/CSP、自定义主机白名单、RSA 防 DoS 等）
+     */
+    private Security security = new Security();
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -356,6 +361,14 @@ public class WebSshProperties {
         this.captcha = captcha;
     }
 
+    public Security getSecurity() {
+        return security;
+    }
+
+    public void setSecurity(Security security) {
+        this.security = security;
+    }
+
     /**
      * WebSSH 管理界面账号（独立于 Linux 连接账号）
      */
@@ -581,6 +594,142 @@ public class WebSshProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    /**
+     * 安全加固配置
+     * <p>默认值在“安全”和“开箱即用（含 HTTP 部署）”之间取平衡：
+     * 安全响应头与 CSP 默认开启，但不强制 HTTPS（HSTS 默认关闭），
+     * 以便必须走 HTTP 的站点仍可正常使用；如需更强隔离可自行调整。</p>
+     */
+    public static class Security {
+        /**
+         * 是否启用安全响应头过滤器（X-Content-Type-Options / X-Frame-Options / Referrer-Policy 等）。
+         * 默认 true。
+         */
+        private boolean headersEnabled = true;
+
+        /**
+         * Content-Security-Policy 头内容。留空字符串则不下发 CSP。
+         * 默认策略适配本项目前端：脚本全部外链（'self'，无内联/无 eval），
+         * 样式存在内联 style=""（需 'unsafe-inline'），验证码图片可能为 data:/blob:，
+         * 终端走 WebSocket（connect-src 需 ws:/wss:）。如前端引入新资源来源需同步调整。
+         */
+        private String contentSecurityPolicy =
+                "default-src 'self'; "
+                + "script-src 'self'; "
+                + "style-src 'self' 'unsafe-inline'; "
+                + "img-src 'self' data: blob:; "
+                + "font-src 'self' data:; "
+                + "connect-src 'self' ws: wss:; "
+                + "object-src 'none'; "
+                + "frame-ancestors 'self'; "
+                + "base-uri 'self'; "
+                + "form-action 'self'";
+
+        /**
+         * 是否下发 HSTS（Strict-Transport-Security）头。
+         * 默认 false，以兼容必须走 HTTP 的部署；仅当整站强制 HTTPS 时才应开启。
+         */
+        private boolean hstsEnabled = false;
+
+        /**
+         * HSTS max-age（秒），默认一年。仅 hstsEnabled=true 时生效。
+         */
+        private long hstsMaxAge = 31536000L;
+
+        /**
+         * 是否允许连接“配置文件 hosts 列表之外”的自定义主机（host:port）。
+         * 默认 true 以保持既有“自由输入 IP 连接”的行为；
+         * 对安全敏感的部署可设为 false，此时仅允许连接 hosts 列表中已配置的主机，
+         * 防止已认证用户把服务器当作跳板连接任意内网地址（SSRF）。
+         */
+        private boolean allowCustomHost = true;
+
+        /**
+         * 自定义主机白名单（精确 host 或 CIDR 网段，如 192.168.1.0/24）。
+         * 仅在 allowCustomHost=true 时生效；非空时，自定义主机必须命中白名单才允许连接。
+         * 留空表示不限制（任意自定义主机均可，等同既有行为）。
+         */
+        private List<String> allowedCustomHosts = new ArrayList<>();
+
+        /**
+         * 单个 HttpSession 内 RSA 私钥映射表的最大条目数。
+         * 超出时清理最早的条目，防止未认证用户反复请求 /auth/public-key
+         * 在 Session 中堆积私钥导致内存耗尽。默认 20。
+         */
+        private int rsaKeyMapMaxSize = 20;
+
+        /**
+         * 单个 IP 每分钟允许请求 /auth/public-key 的最大次数。
+         * 每次请求都会生成 2048 位 RSA 密钥对（CPU 开销较大），限流防止 DoS。
+         * 设为 0 或负数表示关闭限流。默认 30。
+         */
+        private int publicKeyMaxPerMinute = 30;
+
+        public boolean isHeadersEnabled() {
+            return headersEnabled;
+        }
+
+        public void setHeadersEnabled(boolean headersEnabled) {
+            this.headersEnabled = headersEnabled;
+        }
+
+        public String getContentSecurityPolicy() {
+            return contentSecurityPolicy;
+        }
+
+        public void setContentSecurityPolicy(String contentSecurityPolicy) {
+            this.contentSecurityPolicy = contentSecurityPolicy;
+        }
+
+        public boolean isHstsEnabled() {
+            return hstsEnabled;
+        }
+
+        public void setHstsEnabled(boolean hstsEnabled) {
+            this.hstsEnabled = hstsEnabled;
+        }
+
+        public long getHstsMaxAge() {
+            return hstsMaxAge;
+        }
+
+        public void setHstsMaxAge(long hstsMaxAge) {
+            this.hstsMaxAge = hstsMaxAge;
+        }
+
+        public boolean isAllowCustomHost() {
+            return allowCustomHost;
+        }
+
+        public void setAllowCustomHost(boolean allowCustomHost) {
+            this.allowCustomHost = allowCustomHost;
+        }
+
+        public List<String> getAllowedCustomHosts() {
+            return allowedCustomHosts;
+        }
+
+        public void setAllowedCustomHosts(List<String> allowedCustomHosts) {
+            this.allowedCustomHosts = allowedCustomHosts == null ? new ArrayList<>() : new ArrayList<>(allowedCustomHosts);
+        }
+
+        public int getRsaKeyMapMaxSize() {
+            return rsaKeyMapMaxSize;
+        }
+
+        public void setRsaKeyMapMaxSize(int rsaKeyMapMaxSize) {
+            this.rsaKeyMapMaxSize = rsaKeyMapMaxSize;
+        }
+
+        public int getPublicKeyMaxPerMinute() {
+            return publicKeyMaxPerMinute;
+        }
+
+        public void setPublicKeyMaxPerMinute(int publicKeyMaxPerMinute) {
+            this.publicKeyMaxPerMinute = publicKeyMaxPerMinute;
         }
     }
 }

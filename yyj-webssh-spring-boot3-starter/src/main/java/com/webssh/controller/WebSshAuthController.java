@@ -9,6 +9,7 @@ import com.webssh.ssh.SshService;
 import com.webssh.util.RsaSessionHelper;
 import com.webssh.util.RsaUtil;
 import com.webssh.websocket.WebSshWebSocketHandler;
+import com.webssh.websocket.WsTicketStore;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import java.security.KeyPair;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WebSSH 认证控制器
@@ -49,6 +51,45 @@ public class WebSshAuthController {
     @Autowired
     private WebSshWebSocketHandler webSshWebSocketHandler;
 
+    @Autowired
+    private WsTicketStore wsTicketStore;
+
+    /** 按 IP 统计 /auth/public-key 的固定分钟窗口访问次数（[窗口起始时间戳, 计数]），防 RSA 生成 DoS */
+    private final Map<String, long[]> publicKeyAccessMap = new ConcurrentHashMap<>();
+
+    /**
+     * 判断指定 IP 是否已触发公钥接口限流（固定 1 分钟窗口）。
+     * webssh.security.public-key-max-per-minute &lt;= 0 时关闭限流。
+     * <p>已登录用户走宽松上限（基础值×20）：正常操作（多标签、文件会话、断线重连）
+     * 会频繁获取公钥，严格限流会误伤已认证用户，导致密码无法加密、SSH 认证失败。
+     * DoS 防护主要针对未认证的频繁密钥生成请求。</p>
+     */
+    private boolean isPublicKeyRateLimited(String ip, boolean authenticated) {
+        int base = properties.getSecurity().getPublicKeyMaxPerMinute();
+        if (base <= 0 || ip == null) {
+            return false;
+        }
+        int max = authenticated ? base * 20 : base;
+        long now = System.currentTimeMillis();
+        long windowStart = now - (now % 60_000L);
+        long[] rec = publicKeyAccessMap.compute(ip, (k, v) -> {
+            if (v == null || v[0] != windowStart) {
+                return new long[]{windowStart, 1L};
+            }
+            v[1]++;
+            return v;
+        });
+        // 机会性清理过期窗口，限制 Map 内存占用
+        if (publicKeyAccessMap.size() > 10_000) {
+            publicKeyAccessMap.entrySet().removeIf(e -> e.getValue()[0] != windowStart);
+        }
+        if (rec[1] > max) {
+            log.warn("WebSSH: IP {} 请求公钥过于频繁（{} 次/分钟，上限 {}），已限流", ip, rec[1], max);
+            return true;
+        }
+        return false;
+    }
+
     /**
      * 获取 RSA 公钥
      * 每次请求生成新的密钥对，私钥以 keyId 为索引存入 Session，公钥和 keyId 返回前端用于加密密码
@@ -57,10 +98,21 @@ public class WebSshAuthController {
     @GetMapping("/public-key")
     public Map<String, Object> publicKey(HttpSession session, HttpServletRequest request) {
         Map<String, Object> result = new HashMap<>();
+        String clientIp = clientIpExtractor.extract(request);
+        // 已登录用户正常操作（多标签/文件会话/重连）会频繁取公钥，限流阀值需宽松；
+        // 未认证请求（如登录页）仍按严格阀值限制，防止 CPU/内存 DoS
+        Boolean loggedInFlag = (Boolean) session.getAttribute("webssh_logged_in");
+        boolean authenticated = loggedInFlag != null && loggedInFlag;
+        if (isPublicKeyRateLimited(clientIp, authenticated)) {
+            result.put("code", 429);
+            result.put("msg", "请求过于频繁，请稍后再试");
+            return result;
+        }
         try {
             KeyPair keyPair = RsaUtil.generateKeyPair();
-            // 私钥存入 Session 映射表，返回 keyId 供前端回传
-            String keyId = RsaSessionHelper.storePrivateKey(session, keyPair.getPrivate());
+            // 私钥存入 Session 映射表（限制表大小防止堆积），返回 keyId 供前端回传
+            int maxSize = properties.getSecurity().getRsaKeyMapMaxSize();
+            String keyId = RsaSessionHelper.storePrivateKey(session, keyPair.getPrivate(), maxSize);
             String publicKeyBase64 = RsaUtil.getPublicKeyBase64(keyPair.getPublic());
             result.put("code", 200);
             result.put("publicKey", publicKeyBase64);
@@ -68,7 +120,6 @@ public class WebSshAuthController {
             // 附带验证码开关，前端据此决定是否弹出旋转验证
             result.put("captchaEnabled", properties.getCaptcha().isEnabled());
             // 附带登录锁定状态
-            String clientIp = clientIpExtractor.extract(request);
             LoginAttemptService.LockStatus status = loginAttemptService.checkLocked(clientIp);
             result.put("locked", status.isLocked());
             if (status.isLocked()) {
@@ -200,6 +251,42 @@ public class WebSshAuthController {
             diff |= a.charAt(i) ^ b.charAt(i);
         }
         return diff == 0;
+    }
+
+    /**
+     * 签发 WebSocket 一次性连接票据
+     * <p>前端先用 RSA 公钥加密 SSH 密码，再通过本接口（请求体携带密文，不走 URL）
+     * 换取一个短期、一次性票据；随后建立终端 WebSocket 时 URL 仅携带该票据，
+     * 避免密码密文出现在 URL（日志/代理/Referer）中。</p>
+     * <p>本接口位于 {@code /auth/**}（被认证拦截器放行），故在此显式校验登录状态。</p>
+     */
+    @PostMapping("/ws-ticket")
+    public Map<String, Object> wsTicket(@RequestBody Map<String, String> params, HttpSession session) {
+        Map<String, Object> result = new HashMap<>();
+        Boolean loggedIn = (Boolean) session.getAttribute("webssh_logged_in");
+        if (loggedIn == null || !loggedIn) {
+            result.put("code", 401);
+            result.put("msg", "未登录或会话已过期");
+            return result;
+        }
+        String encryptedPassword = params.get("password");
+        String keyId = params.get("keyId");
+        if (encryptedPassword == null || encryptedPassword.isEmpty()) {
+            result.put("code", 400);
+            result.put("msg", "缺少加密密码");
+            return result;
+        }
+        try {
+            String password = RsaSessionHelper.decryptWithSessionKey(session, encryptedPassword, keyId);
+            String ticket = wsTicketStore.issue(password);
+            result.put("code", 200);
+            result.put("ticket", ticket);
+        } catch (Exception e) {
+            log.warn("WS 票据签发失败：密码解密错误", e);
+            result.put("code", 401);
+            result.put("msg", "密码解密失败，请刷新页面重试");
+        }
+        return result;
     }
 
     /**

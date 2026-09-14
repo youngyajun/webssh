@@ -155,6 +155,35 @@ webssh:
     # 是否启用旋转验证码（设为 false 则登录时不校验验证码，前端也不弹出验证码）
     enabled: true
 
+  # ----------------------------------------------------------------------------
+  # 安全加固配置
+  # ----------------------------------------------------------------------------
+  # 默认值兼顾“安全”与“开箱即用（含 HTTP 部署）”：安全响应头/CSP 默认开启，
+  # 但不强制 HTTPS（hsts-enabled 默认 false）。以下为可选覆盖项，通常无需修改。
+  security:
+    # 是否下发安全响应头（X-Content-Type-Options / X-Frame-Options / Referrer-Policy / CSP 等）
+    headers-enabled: true
+    # Content-Security-Policy；留空字符串则不下发 CSP。默认策略适配本项目前端，
+    # 若前端引入新的资源来源（如 CDN 脚本、外部图片）需在此同步放行。
+    # content-security-policy: "default-src 'self'; script-src 'self'; ..."
+    # 是否下发 HSTS 头。仅当整站强制 HTTPS 时才设为 true；HTTP 部署必须保持 false。
+    hsts-enabled: false
+    # HSTS max-age（秒），默认一年，仅 hsts-enabled=true 时生效
+    hsts-max-age: 31536000
+    # 是否允许连接 hosts 列表之外的自定义主机（自由输入 IP:port）。
+    # 默认 true 保持既有行为；设为 false 可防止已认证用户把服务器当作跳板连接任意内网地址（SSRF）。
+    allow-custom-host: true
+    # 自定义主机白名单（精确 host 或 CIDR 网段）。仅 allow-custom-host=true 且此项非空时生效，
+    # 命中的自定义主机才允许连接。留空表示不限制。
+    # allowed-custom-hosts:
+    #   - 192.168.1.0/24
+    #   - 10.0.0.5
+    allowed-custom-hosts: []
+    # 单个会话内 RSA 私钥映射表最大条目数（防未认证反复取公钥堆积私钥耗尽内存）
+    rsa-key-map-max-size: 20
+    # 单个 IP 每分钟允许请求 /auth/public-key 的最大次数（每次生成 2048 位 RSA，限流防 DoS；<=0 关闭）
+    public-key-max-per-minute: 30
+
 # ============================================================================
 # tianai-captcha 行为验证码配置（旋转验证码），不依赖 redis，使用本地内存缓存
 # ----------------------------------------------------------------------------

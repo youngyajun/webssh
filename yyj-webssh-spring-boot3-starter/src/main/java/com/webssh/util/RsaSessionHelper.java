@@ -48,6 +48,19 @@ public final class RsaSessionHelper {
     }
 
     /**
+     * 将私钥存入 Session 映射表并限制表大小，返回唯一的 keyId
+     * 防止未认证用户反复请求公钥在 Session 内堆积私钥导致内存耗尽
+     *
+     * @param session    HttpSession
+     * @param privateKey 要存储的私钥
+     * @param maxSize    映射表最大条目数，&lt;=0 表示不限制
+     * @return keyId
+     */
+    public static String storePrivateKey(HttpSession session, PrivateKey privateKey, int maxSize) {
+        return RsaUtil.storePrivateKey(getKeyMap(session), privateKey, maxSize);
+    }
+
+    /**
      * 从 Session 映射表中按 keyId 取出私钥解密密码，解密后移除该私钥（一次性使用）
      * 用于登录及新建会话等场景的密码加密传输
      *

@@ -39,6 +39,22 @@ public class WebSshFileController {
     private SshService sshService;
 
     /**
+     * 生成可安全返回给客户端的错误信息，避免把底层异常细节（堆栈、驱动、内部实现等）回显。
+     * 已知业务异常（SFTP/SSH/参数/状态类）保留其原始消息，对用户排障友好且不含敏感内部实现；
+     * 其他未预期异常统一返回通用提示 fallback。完整异常始终由调用方 log 记录在服务端。
+     */
+    private static String clientSafeMessage(Throwable e, String fallback) {
+        if (e instanceof SftpException
+                || e instanceof com.jcraft.jsch.JSchException
+                || e instanceof IllegalArgumentException
+                || e instanceof IllegalStateException) {
+            String m = e.getMessage();
+            return (m == null || m.isEmpty()) ? fallback : m;
+        }
+        return fallback;
+    }
+
+    /**
      * 获取主机列表
      */
     @GetMapping("/hosts")
@@ -104,7 +120,7 @@ public class WebSshFileController {
                 result.put("msg", "SSH 认证失败，用户名或密码错误");
             } else {
                 result.put("code", 500);
-                result.put("msg", msg);
+                result.put("msg", clientSafeMessage(e, "连接失败"));
             }
         }
         return result;
@@ -250,7 +266,7 @@ public class WebSshFileController {
                 } catch (Exception e) {
                     log.error("WebSSH: 上传文件失败（本地模式）", e);
                     result.put("code", 500);
-                    result.put("msg", "上传失败: " + e.getMessage());
+                    result.put("msg", "上传失败: " + clientSafeMessage(e, "未知错误"));
                 }
                 return result;
             }
@@ -295,7 +311,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 上传文件失败", e);
             }
             result.put("code", 500);
-            result.put("msg", "上传失败: " + e.getMessage());
+            result.put("msg", "上传失败: " + clientSafeMessage(e, "未知错误"));
         } finally {
             if (sftp != null) {
                 try {
@@ -346,7 +362,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 解析工作目录失败", e);
             }
             result.put("code", 500);
-            result.put("msg", e.getMessage());
+            result.put("msg", clientSafeMessage(e, "解析工作目录失败"));
         }
         return result;
     }
@@ -438,7 +454,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 列出目录失败", e);
             }
             result.put("code", 500);
-            result.put("msg", "无法访问目录: " + e.getMessage());
+            result.put("msg", "无法访问目录: " + clientSafeMessage(e, "未知错误"));
         } finally {
             if (sftp != null) {
                 try {
@@ -492,7 +508,7 @@ public class WebSshFileController {
                 } catch (Exception e) {
                     log.error("WebSSH: 路径建议失败（本地模式）", e);
                     result.put("code", 500);
-                    result.put("msg", e.getMessage());
+                    result.put("msg", clientSafeMessage(e, "路径建议失败"));
                 }
                 return result;
             }
@@ -569,7 +585,7 @@ public class WebSshFileController {
                 } catch (Exception e) {
                     log.error("WebSSH: 获取当前路径失败（本地模式）", e);
                     result.put("code", 500);
-                    result.put("msg", e.getMessage());
+                    result.put("msg", clientSafeMessage(e, "获取当前路径失败"));
                 }
                 return result;
             }
@@ -585,7 +601,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 获取当前路径失败", e);
             }
             result.put("code", 500);
-            result.put("msg", e.getMessage());
+            result.put("msg", clientSafeMessage(e, "获取当前路径失败"));
         } finally {
             if (sftp != null) {
                 try {
@@ -795,7 +811,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 获取文件属性失败", e);
             }
             result.put("code", 500);
-            result.put("msg", e.getMessage());
+            result.put("msg", clientSafeMessage(e, "获取文件属性失败"));
             return result;
         } finally {
             if (exec != null) {
@@ -869,7 +885,7 @@ public class WebSshFileController {
                 } catch (Exception e) {
                     log.error("WebSSH: 计算目录大小失败（本地模式）", e);
                     result.put("code", 500);
-                    result.put("msg", e.getMessage());
+                    result.put("msg", clientSafeMessage(e, "计算目录大小失败"));
                 }
                 return result;
             }
@@ -919,7 +935,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 计算目录大小失败", e);
             }
             result.put("code", 500);
-            result.put("msg", e.getMessage());
+            result.put("msg", clientSafeMessage(e, "计算目录大小失败"));
             return result;
         } finally {
             if (exec != null) {
@@ -950,7 +966,7 @@ public class WebSshFileController {
                     String filename = extractFilename(path);
                     response.setContentType("application/octet-stream");
                     response.setHeader("Content-Disposition",
-                            "attachment; filename=\"" + filename + "\"");
+                            "attachment;filename=\"" + URLEncoder.encode(filename, StandardCharsets.UTF_8) + "\"");
                     LocalFileService.downloadFile(path, response.getOutputStream());
                 } catch (Exception e) {
                     log.error("WebSSH: 下载文件失败（本地模式）", e);
@@ -991,7 +1007,7 @@ public class WebSshFileController {
             }
             if (!response.isCommitted()) {
                 try {
-                    writeJson(response, 500, e.getMessage());
+                    writeJson(response, 500, clientSafeMessage(e, "下载文件失败"));
                 } catch (Exception ignored) {
                 }
             }
@@ -1019,7 +1035,7 @@ public class WebSshFileController {
                     String dirName = extractFilename(path);
                     response.setContentType("application/gzip");
                     response.setHeader("Content-Disposition",
-                            "attachment; filename=\"" + dirName + ".tar.gz\"");
+                            "attachment;filename=\"" + URLEncoder.encode(dirName + ".tar.gz", StandardCharsets.UTF_8) + "\"");
                     LocalFileService.downloadDirectory(path, response.getOutputStream());
                 } catch (Exception e) {
                     log.error("WebSSH: 下载目录失败（本地模式）", e);
@@ -1078,7 +1094,7 @@ public class WebSshFileController {
             }
             if (!response.isCommitted()) {
                 try {
-                    writeJson(response, 500, e.getMessage());
+                    writeJson(response, 500, clientSafeMessage(e, "下载目录失败"));
                 } catch (Exception ignored) {
                 }
             }
@@ -1163,7 +1179,7 @@ public class WebSshFileController {
                 } catch (Exception e) {
                     log.error("WebSSH: 预览文件失败（本地模式）", e);
                     result.put("code", 500);
-                    result.put("msg", e.getMessage());
+                    result.put("msg", clientSafeMessage(e, "预览文件失败"));
                 }
                 return result;
             }
@@ -1213,7 +1229,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 预览文件失败", e);
             }
             result.put("code", 500);
-            result.put("msg", e.getMessage());
+            result.put("msg", clientSafeMessage(e, "预览文件失败"));
         } finally {
             if (sftp != null) {
                 try {
@@ -1259,7 +1275,7 @@ public class WebSshFileController {
                 log.error("WebSSH: 执行命令失败", e);
             }
             result.put("code", 500);
-            result.put("msg", e.getMessage());
+            result.put("msg", clientSafeMessage(e, "执行命令失败"));
         }
         return result;
     }
@@ -1293,7 +1309,7 @@ public class WebSshFileController {
             } else {
                 log.error("WebSSH: 获取监控信息失败", e);
                 result.put("code", 500);
-                result.put("msg", e.getMessage());
+                result.put("msg", clientSafeMessage(e, "获取监控信息失败"));
             }
         }
         return result;
@@ -1393,7 +1409,7 @@ public class WebSshFileController {
             } else {
                 log.error("WebSSH: 获取监控详情失败 type={}", type, e);
                 result.put("code", 500);
-                result.put("msg", e.getMessage());
+                result.put("msg", clientSafeMessage(e, "获取监控详情失败"));
             }
         }
         return result;

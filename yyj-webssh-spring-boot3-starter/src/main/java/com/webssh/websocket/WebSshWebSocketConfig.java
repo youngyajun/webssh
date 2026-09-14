@@ -2,7 +2,6 @@ package com.webssh.websocket;
 
 import com.webssh.config.WebSshProperties;
 import com.webssh.ssh.LocalPtyService;
-import com.webssh.util.RsaSessionHelper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
@@ -42,6 +41,9 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
 
     @Autowired
     private LocalPtyService localPtyService;
+
+    @Autowired
+    private WsTicketStore wsTicketStore;
 
     /**
      * 配置 WebSocket 容器的缓冲区大小和会话超时
@@ -131,17 +133,15 @@ public class WebSshWebSocketConfig implements WebSocketConfigurer {
                         attributes.put("initialRows", rows);
                     }
 
-                    // 获取 RSA 加密的密码参数，使用 Session 中的私钥解密
-                    String encryptedPassword = servletRequest.getParameter("password");
-                    String keyId = servletRequest.getParameter("keyId");
-                    if (encryptedPassword != null && !encryptedPassword.isEmpty()) {
-                        try {
-                            String password = RsaSessionHelper.decryptWithSessionKey(httpSession, encryptedPassword, keyId);
-                            if (password != null) {
-                                attributes.put("sshPassword", password);
-                            }
-                        } catch (Exception e) {
-                            log.warn("WebSSH: WebSocket 握手时密码解密失败", e);
+                    // 获取 RSA 加密密码的一次性票据（密文经 /auth/ws-ticket 换取，不直接放 URL），
+                    // 在此消费票据取回密码。票据一次性、短期有效，避免密码密文泄露到日志/代理/Referer。
+                    String ticket = servletRequest.getParameter("ticket");
+                    if (ticket != null && !ticket.isEmpty()) {
+                        WsTicketStore.ConsumeResult consumed = wsTicketStore.consume(ticket);
+                        if (consumed.isValid() && consumed.getPassword() != null) {
+                            attributes.put("sshPassword", consumed.getPassword());
+                        } else if (!consumed.isValid()) {
+                            log.warn("WebSSH: WebSocket 握手票据无效或已过期");
                         }
                     }
 
