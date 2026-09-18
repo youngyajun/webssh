@@ -4792,9 +4792,31 @@ function uploadFileXhr(file, index, total, done, overwrite) {
                 setTimeout(() => done(false), 1500);
             }
         } catch (e) {
+            // 解析失败说明响应体不是 JSON（容器/代理错误页、或被重定向到首页的 HTML）。
+            // 带上 HTTP 状态码与响应体片段，避免只显示“响应解析失败”而无法定位。
+            const status = uploadXhr.status;
+            const statusText = uploadXhr.statusText || '';
+            const snippet = (uploadXhr.responseText || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+            console.error('[upload] 响应解析失败', { status, statusText, snippet });
+
+            let tip = '✗ 响应解析失败';
+            if (status === 0) {
+                tip += '（无响应：连接被中断或服务端未返回数据）';
+            } else {
+                tip += `（HTTP ${status}${statusText ? ' ' + statusText : ''}）`;
+                if (status === 413) {
+                    tip += '：文件超过服务端/代理的上传大小限制';
+                } else if (status === 408 || status === 504) {
+                    tip += '：请求超时';
+                }
+            }
+            if (snippet) {
+                tip += ' | ' + snippet;
+            }
+
             resultEl.style.display = 'block';
             resultEl.className = 'upload-result error';
-            resultEl.textContent = '✗ 响应解析失败';
+            resultEl.textContent = tip;
             setTimeout(() => done(false), 1500);
         }
     });
