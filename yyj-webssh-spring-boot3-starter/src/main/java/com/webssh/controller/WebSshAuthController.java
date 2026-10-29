@@ -3,6 +3,7 @@ package com.webssh.controller;
 import cloud.tianai.captcha.application.ImageCaptchaApplication;
 import cloud.tianai.captcha.spring.plugins.secondary.SecondaryVerificationApplication;
 import com.webssh.config.WebSshProperties;
+import com.webssh.security.CaptchaSecurityService;
 import com.webssh.security.ClientIpExtractor;
 import com.webssh.security.LoginAttemptService;
 import com.webssh.ssh.SshService;
@@ -47,6 +48,9 @@ public class WebSshAuthController {
 
     @Autowired
     private ImageCaptchaApplication imageCaptchaApplication;
+
+    @Autowired
+    private CaptchaSecurityService captchaSecurityService;
 
     @Autowired
     private WebSshWebSocketHandler webSshWebSocketHandler;
@@ -119,11 +123,14 @@ public class WebSshAuthController {
             result.put("keyId", keyId);
             // 附带验证码开关，前端据此决定是否弹出旋转验证
             result.put("captchaEnabled", properties.getCaptcha().isEnabled());
-            // 附带登录锁定状态
+            // 附带锁定状态：登录密码失败锁定 + 验证码校验失败封禁，取剩余时间较长者
             LoginAttemptService.LockStatus status = loginAttemptService.checkLocked(clientIp);
-            result.put("locked", status.isLocked());
-            if (status.isLocked()) {
-                result.put("lockRemainingSeconds", status.getLockRemainingSeconds());
+            CaptchaSecurityService.AttemptStatus captchaStatus = captchaSecurityService.checkLocked(clientIp);
+            boolean locked = status.isLocked() || captchaStatus.isLocked();
+            result.put("locked", locked);
+            if (locked) {
+                long seconds = Math.max(status.getLockRemainingSeconds(), captchaStatus.getLockRemainingSeconds());
+                result.put("lockRemainingSeconds", Math.max(1, seconds));
             }
         } catch (Exception e) {
             log.error("生成 RSA 密钥对失败", e);
@@ -162,6 +169,12 @@ public class WebSshAuthController {
             if (captchaValidation == null || captchaValidation.isEmpty()) {
                 result.put("code", 401);
                 result.put("msg", "请先完成旋转验证");
+                return result;
+            }
+            // 自管票据：一次性消费，校验签发 IP 与有效期，防止同一票据被跨会话/跨 IP 重放
+            if (!captchaSecurityService.consumeToken(captchaValidation, clientIp)) {
+                result.put("code", 401);
+                result.put("msg", "旋转验证失败或已过期，请重新验证");
                 return result;
             }
             boolean valid = ((SecondaryVerificationApplication) imageCaptchaApplication)

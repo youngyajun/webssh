@@ -49,6 +49,9 @@ public class LocalPtyService {
     /** 每个 WebSocket 会话的命令行缓冲区，用于检测高风险命令 */
     private final ConcurrentHashMap<String, StringBuilder> commandBuffers = new ConcurrentHashMap<>();
 
+    /** ZMODEM 活动门控：与 {@link SshService} 一致，仅 ZMODEM 活跃时二进制帧才原样透传 */
+    private final ZmodemGuard zmodemGuard = new ZmodemGuard();
+
     /** 已编译的高风险命令正则（延迟初始化） */
     private volatile List<Pattern> compiledHighRiskPatterns;
 
@@ -314,6 +317,8 @@ public class LocalPtyService {
             if (asyncSession.isOpen()) {
                 byte[] bytes = new byte[i];
                 System.arraycopy(buffer, 0, bytes, 0, i);
+                // 扫描本地 PTY 输出中的 ZMODEM 帧头，标记会话进入 ZMODEM 传输状态
+                zmodemGuard.onOutput(webSocketSession.getId(), bytes, bytes.length);
                 asyncSession.sendMessage(new BinaryMessage(bytes));
             } else {
                 break;
@@ -330,10 +335,12 @@ public class LocalPtyService {
 
     /**
      * 处理来自前端的二进制输入（ZMODEM rz 上传场景）
-     * 字节直接透传到本地 PTY
+     * <p>仅当会话处于 ZMODEM 活跃窗口内时字节才直接透传到本地 PTY；
+     * 否则视为借二进制帧绕过高风险命令拦截的输入，按普通命令输入走拦截逻辑。</p>
      */
     public void recvHandleBinary(WebSocketSession webSocketSession, byte[] bytes) throws Exception {
-        PtyProcess pty = ptyMap.get(webSocketSession.getId());
+        String sessionId = webSocketSession.getId();
+        PtyProcess pty = ptyMap.get(sessionId);
         if (pty == null) {
             throw new IllegalStateException("本地 PTY 不存在");
         }
@@ -341,6 +348,23 @@ public class LocalPtyService {
             return;
         }
         OutputStream out = pty.getOutputStream();
+
+        // ZMODEM 活跃：合法协议字节，原样透传
+        if (zmodemGuard.isZmodemActive(sessionId)) {
+            zmodemGuard.onBinaryInput(sessionId);
+            out.write(bytes);
+            out.flush();
+            return;
+        }
+
+        // 非 ZMODEM 期间的二进制帧：按命令输入送拦截，避免绕过高风险命令防护
+        List<Pattern> riskPatterns = getHighRiskPatterns();
+        if (!riskPatterns.isEmpty()) {
+            log.warn("WebSSH: 收到非 ZMODEM 二进制输入（本地 PTY），按命令输入送拦截 sessionId={}, len={}", sessionId, bytes.length);
+            String asText = new String(bytes, properties.getCharset());
+            interceptHighRiskCommand(webSocketSession, asText, pty, riskPatterns);
+            return;
+        }
         out.write(bytes);
         out.flush();
     }
@@ -350,6 +374,7 @@ public class LocalPtyService {
      */
     public void closeConnection(WebSocketSession webSocketSession) {
         commandBuffers.remove(webSocketSession.getId());
+        zmodemGuard.clear(webSocketSession.getId());
         PtyProcess pty = ptyMap.remove(webSocketSession.getId());
         if (pty != null) {
             try {

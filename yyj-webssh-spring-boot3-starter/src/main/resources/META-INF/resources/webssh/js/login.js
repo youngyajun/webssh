@@ -7,6 +7,8 @@ let rsaPublicKey = null;
 let rsaKeyId = null;
 // 登录锁定倒计时计时器
 let lockCountdownTimer = null;
+// 锁定提示前缀（登录失败锁定 / 验证码校验封禁）
+let lockMessagePrefix = '登录失败次数过多，已锁定';
 // 是否启用旋转验证码（从后端获取）
 let captchaEnabled = true;
 // 旋转验证成功后的二次验证 token，登录时回传后端
@@ -47,9 +49,13 @@ document.querySelectorAll('.input-wrapper').forEach(wrapper => {
 
 /**
  * 启动锁定倒计时，期间禁用登录按钮
+ *
+ * @param {number} seconds 剩余秒数
+ * @param {string} [prefix] 提示前缀（区分登录失败锁定与验证码校验封禁）
  */
-function startLockCountdown(seconds) {
+function startLockCountdown(seconds, prefix) {
     clearLockCountdown();
+    lockMessagePrefix = prefix || '登录失败次数过多，已锁定';
     let remaining = Math.max(1, Math.ceil(seconds));
     updateLockMessage(remaining);
     loginBtn.disabled = true;
@@ -74,7 +80,7 @@ function updateLockMessage(seconds) {
     const min = Math.floor(seconds / 60);
     const sec = seconds % 60;
     const timeStr = min > 0 ? `${min}分${sec.toString().padStart(2, '0')}秒` : `${sec}秒`;
-    errorMessage.textContent = `登录失败次数过多，已锁定，请于 ${timeStr} 后重试`;
+    errorMessage.textContent = `${lockMessagePrefix}，请于 ${timeStr} 后重试`;
     errorMessage.classList.add('show');
 }
 
@@ -300,6 +306,20 @@ function initCaptcha() {
         },
         // 验证失败回调
         validFail: (res, c, t) => {
+            // 后端对校验失败次数做了封禁：关闭验证层并展示倒计时
+            if (res && res.code === 429) {
+                t.destroyWindow();
+                tacInstance = null;
+                hideCaptchaOverlay();
+                captchaValidation = null;
+                if (res.lockRemainingSeconds) {
+                    startLockCountdown(res.lockRemainingSeconds, '验证码校验失败次数过多，已临时锁定');
+                } else {
+                    errorMessage.textContent = res.msg || '验证失败次数过多，请稍后再试';
+                    errorMessage.classList.add('show');
+                }
+                return;
+            }
             t.reloadCaptcha();
         },
         // 刷新按钮回调

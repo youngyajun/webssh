@@ -135,6 +135,26 @@ webssh:
   captcha:
     # 是否启用旋转验证码（设为 false 则登录时不校验验证码，前端也不弹出验证码）
     enabled: true
+    # 单 IP 每分钟 /captcha/get 上限（每次生成会写本地缓存，防未认证高频请求导致内存/CPU DoS；<=0 关闭）
+    get-max-per-minute: 30
+    # 单 IP 每分钟 /captcha/check 上限（<=0 关闭）
+    check-max-per-minute: 10
+    # 单 IP 在统计窗口内允许的验证码校验失败次数，超过后同时封禁取码与校验；
+    # 0 或负数=关闭。旋转验证码容错 ±2%（约 ±12px/600px），穷举答案空间约需 20 次，
+    # 此处以失败封禁叠加逐步升级的锁定（5→10→20 分钟...），使自动化爆破不再可行。
+    max-fail-attempts: 8
+    # 失败次数统计窗口（分钟）；静默超过该时长后失败计数与封禁级别一并重置
+    fail-window-minutes: 10
+    # 首次触发封禁的时长（分钟）
+    lock-minutes: 5
+    # 封禁时长上限（分钟）
+    max-lock-minutes: 120
+    # 校验成功后签发的一次性票据有效期（秒，与 captcha.secondary.expire 保持一致）
+    token-ttl-seconds: 120
+    # 票据是否绑定签发 IP（仅同一 IP 可在登录时消费），防票据跨会话/跨 IP 重放
+    token-bind-ip: true
+    # 注：失败计数与票据均存放于实例本地内存（与验证码缓存一致），
+    # 多实例部署需保证同一客户端的请求落到同一实例（会话保持）。
 
   # ----------------------------------------------------------------------------
   # 安全加固配置
@@ -152,7 +172,9 @@ webssh:
     # HSTS max-age（秒），默认一年，仅 hsts-enabled=true 时生效
     hsts-max-age: 31536000
     # 是否允许连接 hosts 列表之外的自定义主机（自由输入 IP:port）。
-    # 默认 true 保持既有行为；设为 false 可防止已认证用户把服务器当作跳板连接任意内网地址（SSRF）。
+    # 默认 false（fail-closed）：仅允许连接 hosts 列表已配置的主机，防止已认证用户把
+    # 服务器当作跳板连接任意内网地址（SSRF/内网穿透）。本示例显式开启以演示自由连接；
+    # 生产环境如无此需求应保持 false，或开启后务必配置 allowed-custom-hosts 白名单。
     allow-custom-host: true
     # 自定义主机白名单（精确 host 或 CIDR 网段）。仅 allow-custom-host=true 且此项非空时生效，
     # 命中的自定义主机才允许连接。留空表示不限制。
@@ -164,6 +186,15 @@ webssh:
     rsa-key-map-max-size: 20
     # 单个 IP 每分钟允许请求 /auth/public-key 的最大次数（每次生成 2048 位 RSA，限流防 DoS；<=0 关闭）
     public-key-max-per-minute: 30
+
+  # ----------------------------------------------------------------------------
+  # SSH 连接（/api/connect）安全策略：防“webssh 服务器被当作 SSH 爆破代理”
+  # ----------------------------------------------------------------------------
+  # 基于 IP 统计通过 webssh 连接目标 SSH 主机的认证失败次数，超阈后锁定一段时间。
+  # 与保护 webssh 自身登录的 login-security 相互独立。
+  connect-security:
+    max-fail-attempts: 10      # 单 IP 最大 SSH 连接认证失败次数（0 或负数=关闭限制）
+    lock-minutes: 5            # 锁定时长（分钟）
 
 # ============================================================================
 # tianai-captcha 行为验证码配置（旋转验证码），不依赖 redis，使用本地内存缓存

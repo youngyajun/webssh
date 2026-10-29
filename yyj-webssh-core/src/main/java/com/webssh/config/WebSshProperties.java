@@ -82,6 +82,11 @@ public class WebSshProperties {
     private LoginSecurity loginSecurity = new LoginSecurity();
 
     /**
+     * SSH 连接（/api/connect）安全策略：防止把 webssh 服务器当作 SSH 爆破代理
+     */
+    private ConnectSecurity connectSecurity = new ConnectSecurity();
+
+    /**
      * 旋转验证码配置（tianai-captcha）
      */
     private Captcha captcha = new Captcha();
@@ -310,6 +315,14 @@ public class WebSshProperties {
         this.loginSecurity = loginSecurity;
     }
 
+    public ConnectSecurity getConnectSecurity() {
+        return connectSecurity;
+    }
+
+    public void setConnectSecurity(ConnectSecurity connectSecurity) {
+        this.connectSecurity = connectSecurity;
+    }
+
     public Captcha getCaptcha() {
         return captcha;
     }
@@ -535,6 +548,39 @@ public class WebSshProperties {
     }
 
     /**
+     * SSH 连接尝试限制（防“webssh 服务器被当作 SSH 爆破代理”）
+     * <p>基于 IP 统计 {@code /api/connect} 的 SSH 认证失败次数，超过阈值后锁定一段时间。
+     * 与保护 webssh 自身登录的 {@link LoginSecurity} 相互独立。</p>
+     */
+    public static class ConnectSecurity {
+        /**
+         * 单个 IP 允许的 SSH 连接认证失败次数，超过则锁定（设为 0 或负数表示关闭限制）
+         */
+        private int maxFailAttempts = 10;
+
+        /**
+         * 锁定时长（分钟）
+         */
+        private int lockMinutes = 5;
+
+        public int getMaxFailAttempts() {
+            return maxFailAttempts;
+        }
+
+        public void setMaxFailAttempts(int maxFailAttempts) {
+            this.maxFailAttempts = maxFailAttempts;
+        }
+
+        public int getLockMinutes() {
+            return lockMinutes;
+        }
+
+        public void setLockMinutes(int lockMinutes) {
+            this.lockMinutes = lockMinutes;
+        }
+    }
+
+    /**
      * 旋转验证码配置（tianai-captcha）
      * 不依赖 redis，验证码数据使用本地内存缓存；二次验证开启后，登录时需携带验证成功返回的 token
      */
@@ -545,12 +591,128 @@ public class WebSshProperties {
          */
         private boolean enabled = true;
 
+        /**
+         * 单个 IP 每分钟允许请求 /captcha/get（生成验证码）的最大次数。
+         * 每次生成都会向本地缓存写入一条待校验数据（无 redis 时无容量上限），
+         * 限流防止未认证高频请求导致内存耗尽 / CPU DoS。设为 0 或负数关闭限流。默认 30。
+         */
+        private int getMaxPerMinute = 30;
+
+        /**
+         * 单个 IP 每分钟允许请求 /captcha/check（校验验证码）的最大次数。
+         * 旋转验证码答案空间较小且校验接口未认证，限流配合下面的失败锁定，
+         * 可显著降低“取码-猜角度”自动化爆破的可行性。设为 0 或负数关闭限流。默认 10。
+         */
+        private int checkMaxPerMinute = 10;
+
+        /**
+         * 单个 IP 在统计窗口内允许的验证码校验失败次数，超过后临时禁止该 IP 继续
+         * “取码 + 校验”（含 /captcha/get 与 /captcha/check）。设为 0 或负数关闭该限制。默认 8。
+         *
+         * <p>旋转验证码容错值为 ±2%（约 ±12px / 背景 600px），穷举整个答案空间约需 20 次尝试，
+         * 单靠每次生成只能试一次的 ID 机制无法阻止“循环取码—猜角度”。此处以失败次数封禁叠加
+         * 逐步升级的锁定时长，使自动化爆破的期望成本远大于收益。</p>
+         */
+        private int maxFailAttempts = 8;
+
+        /**
+         * 校验失败次数的滑动统计窗口（分钟）。超过上限被封禁后，若静默时间超过该窗口，
+         * 失败计数与封禁升级级别一并重置。默认 10。
+         */
+        private int failWindowMinutes = 10;
+
+        /**
+         * 首次达到失败上限时的封禁时长（分钟）。同一 IP 在统计窗口内反复触发时逐级加倍
+         * （5 → 10 → 20 ...），上限见 {@link #maxLockMinutes}。默认 5。
+         */
+        private int lockMinutes = 5;
+
+        /**
+         * 封禁时长的上限（分钟），防止升级序列过长。默认 120。
+         */
+        private int maxLockMinutes = 120;
+
+        /**
+         * 校验成功后签发的二次验证票据有效期（秒）。默认 120，与 captcha.secondary.expire 保持一致。
+         * 票据在登录二次校验时立即作废（一次性），且绑定签发时的客户端 IP。
+         */
+        private int tokenTtlSeconds = 120;
+
+        /**
+         * 二次验证票据是否绑定签发 IP（仅允许同一 IP 在登录时消费）。默认 true。
+         */
+        private boolean tokenBindIp = true;
+
         public boolean isEnabled() {
             return enabled;
         }
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+
+        public int getGetMaxPerMinute() {
+            return getMaxPerMinute;
+        }
+
+        public void setGetMaxPerMinute(int getMaxPerMinute) {
+            this.getMaxPerMinute = getMaxPerMinute;
+        }
+
+        public int getCheckMaxPerMinute() {
+            return checkMaxPerMinute;
+        }
+
+        public void setCheckMaxPerMinute(int checkMaxPerMinute) {
+            this.checkMaxPerMinute = checkMaxPerMinute;
+        }
+
+        public int getMaxFailAttempts() {
+            return maxFailAttempts;
+        }
+
+        public void setMaxFailAttempts(int maxFailAttempts) {
+            this.maxFailAttempts = maxFailAttempts;
+        }
+
+        public int getFailWindowMinutes() {
+            return failWindowMinutes;
+        }
+
+        public void setFailWindowMinutes(int failWindowMinutes) {
+            this.failWindowMinutes = failWindowMinutes;
+        }
+
+        public int getLockMinutes() {
+            return lockMinutes;
+        }
+
+        public void setLockMinutes(int lockMinutes) {
+            this.lockMinutes = lockMinutes;
+        }
+
+        public int getMaxLockMinutes() {
+            return maxLockMinutes;
+        }
+
+        public void setMaxLockMinutes(int maxLockMinutes) {
+            this.maxLockMinutes = maxLockMinutes;
+        }
+
+        public int getTokenTtlSeconds() {
+            return tokenTtlSeconds;
+        }
+
+        public void setTokenTtlSeconds(int tokenTtlSeconds) {
+            this.tokenTtlSeconds = tokenTtlSeconds;
+        }
+
+        public boolean isTokenBindIp() {
+            return tokenBindIp;
+        }
+
+        public void setTokenBindIp(boolean tokenBindIp) {
+            this.tokenBindIp = tokenBindIp;
         }
     }
 
@@ -598,11 +760,12 @@ public class WebSshProperties {
 
         /**
          * 是否允许连接“配置文件 hosts 列表之外”的自定义主机（host:port）。
-         * 默认 true 以保持既有“自由输入 IP 连接”的行为；
-         * 对安全敏感的部署可设为 false，此时仅允许连接 hosts 列表中已配置的主机，
-         * 防止已认证用户把服务器当作跳板连接任意内网地址（SSRF）。
+         * 默认 false（fail-closed）：仅允许连接 hosts 列表中已配置的主机，
+         * 防止已认证用户把服务器当作跳板连接任意内网地址（SSRF/内网穿透）。
+         * 确有“自由输入 IP 连接”需求时再显式设为 true，并建议同时配置
+         * {@link #allowedCustomHosts} 白名单限定可连网段。
          */
-        private boolean allowCustomHost = true;
+        private boolean allowCustomHost = false;
 
         /**
          * 自定义主机白名单（精确 host 或 CIDR 网段，如 192.168.1.0/24）。

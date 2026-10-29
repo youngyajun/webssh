@@ -41,6 +41,10 @@ public class SshService {
     /** 每个 WebSocket 会话的命令行缓冲区，用于检测高风险命令 */
     private final ConcurrentHashMap<String, StringBuilder> commandBuffers = new ConcurrentHashMap<>();
 
+    /** ZMODEM 活动门控：仅当服务端输出已发起 ZMODEM 时，才允许二进制帧原样透传，
+     *  否则二进制帧按命令输入送高风险拦截，堵住“借二进制帧绕过命令拦截”的路径 */
+    private final ZmodemGuard zmodemGuard = new ZmodemGuard();
+
     /** 本地 PTY 模式（type=local）的文件会话 sessionId 集合
      *  这些会话不持有 JSch Session，executeCommand 通过本地 ProcessBuilder 执行 */
     private final java.util.Set<String> localFileSessionIds =
@@ -244,6 +248,22 @@ public class SshService {
     }
 
     /**
+     * 对外暴露的高风险命令判定（供 /api/exec 等非交互式命令入口复用）。
+     * <p>终端交互输入走 {@link #interceptHighRiskCommand} 逐字符缓冲拦截，
+     * 而 /api/exec 接收的是完整命令字符串，直接用本方法整体匹配同一份黑名单，
+     * 确保任意命令执行入口不会绕过高风险命令防护。</p>
+     *
+     * @param command 待判定的完整命令
+     * @return 命中任一高风险正则返回 true；command 为空或未配置黑名单返回 false
+     */
+    public boolean isHighRiskCommand(String command) {
+        if (command == null || command.isEmpty()) {
+            return false;
+        }
+        return isHighRiskCommand(command, getHighRiskPatterns());
+    }
+
+    /**
      * 获取已编译的高风险命令正则列表（延迟初始化）
      */
     private List<Pattern> getHighRiskPatterns() {
@@ -342,6 +362,8 @@ public class SshService {
             if (asyncSession.isOpen()) {
                 byte[] bytes = new byte[i];
                 System.arraycopy(buffer, 0, bytes, 0, i);
+                // 扫描服务端输出中的 ZMODEM 帧头，用于标记该会话进入 ZMODEM 传输状态
+                zmodemGuard.onOutput(webSocketSession.getId(), bytes, bytes.length);
                 asyncSession.sendMessage(new BinaryMessage(bytes));
             } else {
                 break;
@@ -358,14 +380,16 @@ public class SshService {
 
     /**
      * 处理来自前端的二进制输入（ZMODEM rz 上传场景）
-     * 字节直接透传到 SSH 通道，跳过命令行缓冲与高风险命令拦截：
-     * ZMODEM 数据流是二进制协议帧，不应作为 shell 命令解析
+     * <p>仅当会话处于 ZMODEM 活跃窗口内时，字节才直接透传到 SSH 通道（ZMODEM 协议帧
+     * 不应作为 shell 命令解析）；否则视为借二进制帧绕过高风险命令拦截的输入，
+     * 按普通命令输入走与文本相同的拦截逻辑。</p>
      *
      * @param webSocketSession WebSocket 会话
      * @param bytes            前端发来的原始字节
      */
     public void recvHandleBinary(WebSocketSession webSocketSession, byte[] bytes) throws Exception {
-        Channel channel = sessionHolder.getChannel(webSocketSession.getId());
+        String sessionId = webSocketSession.getId();
+        Channel channel = sessionHolder.getChannel(sessionId);
         if (channel == null) {
             throw new IllegalStateException("SSH通道不存在");
         }
@@ -373,6 +397,24 @@ public class SshService {
             return;
         }
         OutputStream outputStream = channel.getOutputStream();
+
+        // ZMODEM 活跃：合法协议字节，原样透传
+        if (zmodemGuard.isZmodemActive(sessionId)) {
+            zmodemGuard.onBinaryInput(sessionId);
+            outputStream.write(bytes);
+            outputStream.flush();
+            return;
+        }
+
+        // 非 ZMODEM 期间的二进制帧：不能无条件透传，否则可绕过高风险命令拦截。
+        List<Pattern> riskPatterns = getHighRiskPatterns();
+        if (!riskPatterns.isEmpty()) {
+            log.warn("WebSSH: 收到非 ZMODEM 二进制输入，按命令输入送拦截 sessionId={}, len={}", sessionId, bytes.length);
+            String asText = new String(bytes, properties.getCharset());
+            interceptHighRiskCommand(webSocketSession, asText, channel, riskPatterns);
+            return;
+        }
+        // 未配置高风险命令黑名单：无可绕过的防护，保持原样透传
         outputStream.write(bytes);
         outputStream.flush();
     }
@@ -434,6 +476,7 @@ public class SshService {
      */
     public void closeConnection(WebSocketSession webSocketSession) {
         commandBuffers.remove(webSocketSession.getId());
+        zmodemGuard.clear(webSocketSession.getId());
         sessionHolder.closeSession(webSocketSession.getId());
     }
 

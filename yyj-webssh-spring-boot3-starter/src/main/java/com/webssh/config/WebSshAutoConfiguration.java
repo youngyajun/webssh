@@ -4,8 +4,10 @@ import com.webssh.controller.WebSshAuthController;
 import com.webssh.controller.WebSshCaptchaController;
 import com.webssh.controller.WebSshFileController;
 import com.webssh.controller.WebSshPageController;
+import com.webssh.security.CaptchaSecurityService;
 import com.webssh.security.ClientIpExtractor;
 import com.webssh.security.LoginAttemptService;
+import com.webssh.security.SshConnectAttemptService;
 import com.webssh.security.WebSshAuthInterceptor;
 import com.webssh.security.WebSshSecurityHeadersFilter;
 import com.webssh.ssh.LocalPtyService;
@@ -60,6 +62,8 @@ import java.util.Set;
 
         LocalPtyService.class,
         LoginAttemptService.class,
+        SshConnectAttemptService.class,
+        CaptchaSecurityService.class,
         ClientIpExtractor.class,
         WebSshWebSocketConfig.class
 })

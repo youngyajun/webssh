@@ -6,6 +6,9 @@ import com.jcraft.jsch.Session;
 import com.jcraft.jsch.SftpException;
 import com.webssh.ssh.LocalFileService;
 import com.webssh.ssh.SshService;
+import com.webssh.security.ClientIpExtractor;
+import com.webssh.security.LoginAttemptService;
+import com.webssh.security.SshConnectAttemptService;
 import com.webssh.util.RsaSessionHelper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -37,6 +40,12 @@ public class WebSshFileController {
 
     @Autowired
     private SshService sshService;
+
+    @Autowired
+    private SshConnectAttemptService sshConnectAttemptService;
+
+    @Autowired
+    private ClientIpExtractor clientIpExtractor;
 
     /**
      * 生成可安全返回给客户端的错误信息，避免把底层异常细节（堆栈、驱动、内部实现等）回显。
@@ -80,12 +89,23 @@ public class WebSshFileController {
      * 多标签页场景下，每个标签页创建独立的文件会话，互不影响
      */
     @PostMapping("/connect")
-    public Map<String, Object> connect(@RequestBody Map<String, String> params, HttpSession session) {
+    public Map<String, Object> connect(@RequestBody Map<String, String> params, HttpSession session,
+                                       HttpServletRequest request) {
         Map<String, Object> result = new HashMap<>();
         String host = params.get("host");
         if (host == null || host.isEmpty()) {
             result.put("code", 400);
             result.put("msg", "host不能为空");
+            return result;
+        }
+        // 防“SSH 爆破代理”：同一 IP 的连接认证失败次数超阈后锁定，不允许继续尝试
+        String clientIp = clientIpExtractor.extract(request);
+        LoginAttemptService.LockStatus lockStatus = sshConnectAttemptService.checkLocked(clientIp);
+        if (lockStatus.isLocked()) {
+            log.warn("WebSSH: IP {} 的 SSH 连接已被锁定，拒绝 host={} 的连接请求", clientIp, host);
+            result.put("code", 429);
+            result.put("msg", "SSH 连接失败次数过多，请稍后再试");
+            result.put("lockRemainingSeconds", lockStatus.getLockRemainingSeconds());
             return result;
         }
         try {
@@ -98,6 +118,8 @@ public class WebSshFileController {
             String password = RsaSessionHelper.decryptWithSessionKey(session, encryptedPassword, keyId);
 
             String sessionId = sshService.createFileSession(host, username, password);
+            // 连接成功：清除该 IP 的失败记录
+            sshConnectAttemptService.recordSuccess(clientIp);
             // 追踪所有文件会话，用于 logout 时统一清理
             // 注意：不再往 HttpSession 写入 fileSessionId 单值，多标签场景下该回退值会过期导致报错
             trackFileSession(session, sessionId);
@@ -113,11 +135,17 @@ public class WebSshFileController {
                 result.put("code", 401);
                 result.put("msg", msg);
             }
-            // 检测是否为 SSH 认证失败
+            // 检测是否为 SSH 认证失败：计入爆破限制
             else if (msg != null && (msg.contains("Auth fail") || msg.contains("Authentication failed")
                     || (e instanceof com.jcraft.jsch.JSchException))) {
+                LoginAttemptService.LockStatus failStatus = sshConnectAttemptService.recordFailure(clientIp);
                 result.put("code", 401);
                 result.put("msg", "SSH 认证失败，用户名或密码错误");
+                if (failStatus.isLocked()) {
+                    result.put("code", 429);
+                    result.put("msg", "SSH 认证失败次数过多，已锁定");
+                    result.put("lockRemainingSeconds", failStatus.getLockRemainingSeconds());
+                }
             } else {
                 result.put("code", 500);
                 result.put("msg", clientSafeMessage(e, "连接失败"));
@@ -1261,6 +1289,18 @@ public class WebSshFileController {
         if (command == null || command.isEmpty()) {
             result.put("code", 400);
             result.put("msg", "命令不能为空");
+            return result;
+        }
+
+        // 审计：记录“谁在哪个会话上执行了什么命令”（/exec 为任意命令执行入口，必须可追溯）
+        Object auditUser = httpSession.getAttribute("webssh_user");
+        log.info("WebSSH审计: /exec user={}, sessionId={}, command={}", auditUser, sessionId, command);
+
+        // 高风险命令拦截：/exec 与终端交互共用同一份黑名单，避免通过该接口绕过防护
+        if (sshService.isHighRiskCommand(command)) {
+            log.warn("WebSSH: /exec 拦截高风险命令 user={}, sessionId={}, command={}", auditUser, sessionId, command);
+            result.put("code", 403);
+            result.put("msg", "高风险命令已被安全策略拦截");
             return result;
         }
 
