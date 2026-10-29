@@ -206,7 +206,7 @@ webssh:
 
 
   # ============================================================================
-  # WebSSH 管理界面登录账号配置（单账号与多账号可共存，用户名冲突时以多账号为准）
+  # WebSSH 管理界面登录账号配置（仅使用 accounts 列表）
   # ----------------------------------------------------------------------------
   # 【密码强度规则】长度 8~19 位（>=8 且 <20），必须同时包含：
   #   - 大写字母 A-Z
@@ -215,30 +215,24 @@ webssh:
   # 不符合规则的账号视为无效，启动时仅告警并跳过（不影响启动），但无法用于登录。
   # 例如 "Abc12345" 合规；"webssh"（无大写无数字、长度不足）不合规，会被跳过。
   #
-  # 方式一：单账号模式（向后兼容）
-  #
-  # 方式二：多账号模式（推荐）
+  # accounts 列表用法：
   #   accounts:
   #     - username: admin
   #       password: Admin@2024
   #     - username: ops
   #       password: Ops#2024abc
   #
-  # 共存规则：
-  #   - 两者同时配置时，会合并为最终账号列表共同生效
-  #   - 若单账号的 username 与 accounts 中某账号同名，则忽略单账号（以多账号为准）
-  #   - 两者均未配置时不阻止启动，仅告警（登录将全部失败）
+  # 未配置任何账号时不阻止启动，仅告警（登录将全部失败）
   # ============================================================================
 
   # 不要在版本库中提交管理口令。部署时从环境变量或密钥管理服务注入：
-  # username: ${WEBSSH_USERNAME:}
-  # password: ${WEBSSH_PASSWORD:}
-
-  # 多账号列表（与 username/password 共存；用户名冲突时以多账号为准）
-  accounts: [
-#    {username: test, password: 123456},
-#    {username: root, password: 123456}
-  ]
+  # 注意：占位符需用引号包裹（否则 ${...:} 中的 { } : 会被 YAML 当作流式语法，导致整个文件解析失败）
+  accounts:
+    - username: "${WEBSSH_USERNAME:}"
+      password: "${WEBSSH_PASSWORD:}"
+  # 固定账号示例
+#    - username: test
+#      password: "Abc12345"
 
   # SSH 主机列表
   hosts:
@@ -312,7 +306,7 @@ spring:
 
 正常启动`Spring Boot`应用即可，Starter 会通过 `AutoConfiguration.imports` 自动装配，无需额外注解或配置类。
 
-访问 `http://your-host:port/webssh/login.html`，使用 `webssh.username` / `webssh.password` 登录后选择主机连接。
+访问 `http://your-host:port/webssh/login.html`，使用 `webssh.accounts` 中配置的账号登录后选择主机连接。
 
 # 5. 配置项参考
 
@@ -320,8 +314,7 @@ spring:
 |--------|--------|------|
 | `webssh.enabled` | `true` | 是否启用 WebSSH |
 | `webssh.context-path` | `/webssh` | 界面访问路径前缀 |
-| `webssh.username` | 无（必填） | 管理界面登录账号 |
-| `webssh.password` | 无（必填） | 管理界面登录密码 |
+| `webssh.accounts` | 空 | 管理界面登录账号列表（每项含 `username`/`password`） |
 | `webssh.timeout` | `5000` | SSH 连接超时（毫秒） |
 | `webssh.terminal-type` | `xterm` | 终端类型 |
 | `webssh.charset` | `UTF-8` | 字符编码 |
@@ -437,7 +430,7 @@ mv META-INF/webssh-logback-template.xml src/main/resources/logback-spring.xml
 
 ## 5.4 安全建议
 
-1. **通过密钥管理服务或环境变量注入凭据**：切勿把 `webssh.username`、`webssh.password` 或 SSH 凭据提交到仓库。
+1. **通过密钥管理服务或环境变量注入凭据**：切勿把 `webssh.accounts` 中的账号口令或 SSH 凭据提交到仓库。
 2. **配置可信主机指纹**：`strict-host-key-checking` 默认为 `true`；生产环境必须提供匹配的 `known-hosts`，切勿设为 `false`。
 3. **设置精确的 WebSocket Origin 白名单**：生产环境配置实际的 HTTPS 域名，绝不使用 `*`。
 4. **高风险命令规则只用于防误操作**：真正的权限控制应由 SSH 账号、sudo 和主机侧策略实施。
@@ -447,7 +440,7 @@ mv META-INF/webssh-logback-template.xml src/main/resources/logback-spring.xml
 
 如果接入项目已启用 `Spring Security`，`WebSSH` 的页面、认证接口、文件管理 API、`WebSocket` 通道都会被 Security 拦截，需要显式放行。最简单的做法是将整个 `webssh.context-path`（默认 `/webssh`）下的所有路径全部 `permitAll()`。
 
-> **说明**：WebSSH Starter 内部已自带登录鉴权（基于 `webssh.username` / `webssh.password` + RSA 加密 + IP 锁定 + 登录失败计数）。放行后 WebSSH 仍会走自身登录流程，不会"裸奔"。无需在 Spring Security 侧重复鉴权。
+> **说明**：WebSSH Starter 内部已自带登录鉴权（基于 `webssh.accounts` 账号 + RSA 加密 + IP 锁定 + 登录失败计数）。放行后 WebSSH 仍会走自身登录流程，不会"裸奔"。无需在 Spring Security 侧重复鉴权。
 
 ### 5.5.1 Spring Boot 3.x / 4.x（Spring Security 6.x，`jakarta`）
 

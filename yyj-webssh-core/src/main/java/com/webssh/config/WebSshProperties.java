@@ -25,23 +25,8 @@ public class WebSshProperties {
     private String contextPath = "/webssh";
 
     /**
-     * WebSSH 界面访问的账号（单账号模式，向后兼容）
-     * 无默认值，启动时强制要求配置，防止使用默认凭据部署到生产环境
-     * 与 accounts（多账号）共存：若用户名与 accounts 中已有账号冲突，则忽略单账号（以多账号为准）
-     */
-    private String username;
-
-    /**
-     * WebSSH 界面访问的密码（单账号模式，向后兼容）
-     * 无默认值，启动时强制要求配置，建议使用强密码
-     * 与 accounts（多账号）共存：若用户名与 accounts 中已有账号冲突，则忽略单账号（以多账号为准）
-     */
-    private String password;
-
-    /**
-     * WebSSH 管理界面多账号列表（多账号模式）
-     * 与 username/password（单账号）共存，两者将合并为最终账号列表；
-     * 用户名冲突时以多账号为准（单账号被跳过）
+     * WebSSH 管理界面账号列表（唯一的管理账号配置入口）
+     * 每个账号包含 username/password；未配置任何账号时不阻止启动，仅告警（登录将全部失败）
      */
     private List<Account> accounts = new ArrayList<>();
 
@@ -122,22 +107,6 @@ public class WebSshProperties {
         this.contextPath = contextPath;
     }
 
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
-    }
-
     public List<Account> getAccounts() {
         return accounts;
     }
@@ -148,37 +117,25 @@ public class WebSshProperties {
 
     /**
      * 获取生效的管理账号列表（统一入口，供启动校验与登录认证使用）
-     * 单账号与多账号共存，按以下规则合并：
-     *   1. 先加入 accounts（多账号）中所有用户名非空的账号
-     *   2. 再加入 username/password（单账号）：若其用户名与 accounts 中任一账号冲突，则跳过（以多账号为准）
-     *   3. 两者均未配置时返回空列表（调用方仅告警，不阻止启动）
+     * 规则：
+     *   1. 跳过空账号以及用户名为空的账号（例如仅通过环境变量占位但未注入值）
+     *   2. 同名账号仅保留首个
+     *   3. 未配置任何账号时返回空列表（调用方仅告警，不阻止启动）
      */
     public List<Account> getEffectiveAccounts() {
         List<Account> result = new ArrayList<>();
+        if (accounts == null) {
+            return result;
+        }
         Set<String> seenUsernames = new HashSet<>();
-
-        // 1. 先收录多账号（冲突时以此为准）
-        if (accounts != null) {
-            for (Account account : accounts) {
-                if (account == null || account.getUsername() == null || account.getUsername().isEmpty()) {
-                    continue;
-                }
-                if (seenUsernames.add(account.getUsername())) {
-                    result.add(account);
-                }
+        for (Account account : accounts) {
+            if (account == null || account.getUsername() == null || account.getUsername().isEmpty()) {
+                continue;
+            }
+            if (seenUsernames.add(account.getUsername())) {
+                result.add(account);
             }
         }
-
-        // 2. 再尝试追加单账号：用户名与多账号冲突时跳过（以多账号为准）
-        if (username != null && !username.isEmpty() && password != null && !password.isEmpty()) {
-            if (seenUsernames.add(username)) {
-                Account single = new Account();
-                single.setUsername(username);
-                single.setPassword(password);
-                result.add(single);
-            }
-        }
-
         return result;
     }
 

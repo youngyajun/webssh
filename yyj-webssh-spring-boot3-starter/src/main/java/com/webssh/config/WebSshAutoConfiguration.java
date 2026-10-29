@@ -224,10 +224,8 @@ public class WebSshAutoConfiguration {
 
     /**
      * 启动时校验管理凭据已配置
-     * 支持两种配置方式（可共存，用户名冲突时以多账号为准）：
-     *   1. 多账号模式：webssh.accounts 列表，每项含 username/password
-     *   2. 单账号模式（向后兼容）：webssh.username + webssh.password
-     * 两者均未配置或全部无效时仅告警，不阻止启动（登录将全部失败）
+     * 管理账号统一由 webssh.accounts 列表配置，每项含 username/password
+     * 未配置任何有效账号时仅告警，不阻止启动（登录将全部失败）
      *
      * 密码强度规则：长度 8~19 位（>=8 且 <20），必须同时包含大写字母、小写字母和数字
      * 不符合规则的账号视为无效，仅记录告警日志并跳过，不影响启动；
@@ -240,7 +238,7 @@ public class WebSshAutoConfiguration {
         if (effective.isEmpty()) {
             // 未配置任何账号：不阻止启动，但明确告警当前无人可登录
             log.error("WebSSH: 未配置任何管理账号，当前无可用账号，登录将全部失败！");
-            log.error("WebSSH: 请在 application.yml 中设置 webssh.accounts（多账号），或 webssh.username/webssh.password（单账号）");
+            log.error("WebSSH: 请在 application.yml 中设置 webssh.accounts（管理账号列表，每项含 username/password）");
             return;
         }
 
